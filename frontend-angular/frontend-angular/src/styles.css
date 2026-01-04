@@ -1,0 +1,20 @@
+/* Reset mínimo */
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Muy importante: evita scroll horizontal por desbordes */
+html,
+body {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Box-sizing global (evita que padding/width generen overflow) */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

@@ -14,11 +14,11 @@ app.use(express.json());
 // MySQL pool
 // ===============================
 const pool = mysql.createPool({
-  host: "localhost",
-  user: "root",
-  password: "root",
-  port: 3307,
-  database: "myworkout",
+  host: process.env.MYSQL_HOST ?? "localhost",
+  user: process.env.MYSQL_USER ?? "root",
+  password: process.env.MYSQL_PASSWORD ?? "root",
+  port: Number(process.env.MYSQL_PORT ?? 3307),
+  database: process.env.MYSQL_DATABASE ?? "myworkout",
   waitForConnections: true,
   connectionLimit: 10,
 });
@@ -38,6 +38,12 @@ const JWT_SECRET = "supersecret-token-myworkout";
  * Esto elimina casi todo el inglés y también reduce muchísimo el volumen.
  */
 const ONLY_SPANISH = true;
+
+/**
+ * Si true: SOLO guardamos ejercicios que tengan URL de imagen válida.
+ * Esto evita que se inserten ejercicios con image_url = NULL.
+ */
+const ONLY_WITH_IMAGE = true;
 
 /**
  * Límite duro de ejercicios insertados/actualizados en una sincronización,
@@ -168,7 +174,7 @@ function pickBestText(ex: WgerExerciseInfo) {
 function isGarbageName(name: string): boolean {
   const n = name.trim();
   if (n.length < 3) return true;
-  // ejemplos típicos de basura
+
   const lowered = n.toLowerCase();
   if (lowered === "test" || lowered === "asdf" || lowered === "exercise") {
     return true;
@@ -201,6 +207,15 @@ function normalizeMuscleIds(arr?: Array<number | { id: number }>): number[] {
   }
 
   return ids;
+}
+
+/**
+ * Devuelve la primera URL de imagen válida (si existe) o null.
+ */
+function pickFirstImageUrl(ex: WgerExerciseInfo): string | null {
+  const first = ex.images && ex.images.length > 0 ? ex.images[0]?.image : null;
+  const url = typeof first === "string" ? first.trim() : "";
+  return url ? url : null;
 }
 
 /**
@@ -358,13 +373,6 @@ app.get("/auth/me", async (req, res) => {
 // ===============================
 // (Opcional) Reset catálogo
 // ===============================
-/**
- * Si quieres “catálogo consistente”, usa:
- *   1) POST /exercises/reset
- *   2) POST /exercises/sync
- *
- * Esto evita que te queden restos de sincronizaciones anteriores.
- */
 app.post("/exercises/reset", async (_req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -397,10 +405,7 @@ app.post("/exercises/sync", async (_req, res) => {
   console.log("======================================");
   console.log("[SYNC] Inicio...");
 
-  // 1) músculos (WGER devuelve ~15 en este endpoint)
   const musclesUrl = "https://wger.de/api/v2/muscle/?limit=200";
-
-  // 2) exerciseinfo (pedimos ES)
   const exerciseInfoUrl = `https://wger.de/api/v2/exerciseinfo/?language=${WGER_LANG_ES}&limit=200`;
 
   let inserted = 0;
@@ -408,6 +413,7 @@ app.post("/exercises/sync", async (_req, res) => {
   let relationsInserted = 0;
 
   let skippedNoSpanish = 0;
+  let skippedNoImage = 0;
   let skippedGarbage = 0;
   let skippedDuplicates = 0;
 
@@ -439,6 +445,7 @@ app.post("/exercises/sync", async (_req, res) => {
     let processed = 0;
 
     for (const ex of exercises) {
+      // límite de procesado
       if (
         MAX_EXERCISES_TO_PROCESS > 0 &&
         processed >= MAX_EXERCISES_TO_PROCESS
@@ -447,13 +454,6 @@ app.post("/exercises/sync", async (_req, res) => {
       }
 
       const wgerId = ex.id;
-
-      // DEBUG opcional (puedes quitarlo cuando verifiques que ya inserta relaciones)
-      if (processed < 5) {
-        console.log("[DEBUG] ex.id =", ex.id);
-        console.log("[DEBUG] ex.muscles =", ex.muscles);
-        console.log("[DEBUG] ex.muscles_secondary =", ex.muscles_secondary);
-      }
 
       // Elegimos texto (prioriza ES)
       const best = pickBestText(ex);
@@ -483,8 +483,16 @@ app.post("/exercises/sync", async (_req, res) => {
         ? stripHtml(descriptionHtml)
         : null;
 
-      const imageUrl =
-        ex.images && ex.images.length > 0 ? ex.images[0].image : null;
+      // ===============================
+      // FILTRO POR IMAGEN (SOLUCIÓN)
+      // ===============================
+      const imageUrl = pickFirstImageUrl(ex);
+
+      // Si exigimos imagen, descartamos si no hay URL válida
+      if (ONLY_WITH_IMAGE && !imageUrl) {
+        skippedNoImage++;
+        continue;
+      }
 
       // existe?
       const [rows] = await conn.query<RowDataPacket[]>(
@@ -518,7 +526,7 @@ app.post("/exercises/sync", async (_req, res) => {
       }
 
       // ===============================
-      // Relaciones primarios + secundarios (FIX)
+      // Relaciones primarios + secundarios
       // ===============================
       const primaryIds = normalizeMuscleIds(ex.muscles);
       const secondaryIds = normalizeMuscleIds(ex.muscles_secondary);
@@ -528,7 +536,6 @@ app.post("/exercises/sync", async (_req, res) => {
       );
 
       for (const wgerMuscleId of allMuscleIds) {
-        // aquí wgerMuscleId ya es number seguro
         const [mRows] = await conn.query<RowDataPacket[]>(
           "SELECT id FROM muscles WHERE wger_id = ?",
           [wgerMuscleId]
@@ -557,12 +564,13 @@ app.post("/exercises/sync", async (_req, res) => {
       `[SYNC] OK -> inserted=${inserted}, updated=${updated}, relationsInserted=${relationsInserted}`
     );
     console.log(
-      `[SYNC] Skipped -> noSpanish=${skippedNoSpanish}, garbage=${skippedGarbage}, dupName=${skippedDuplicates}`
+      `[SYNC] Skipped -> noSpanish=${skippedNoSpanish}, noImage=${skippedNoImage}, garbage=${skippedGarbage}, dupName=${skippedDuplicates}`
     );
 
     return res.json({
       message: "Sincronización completada",
       onlySpanish: ONLY_SPANISH,
+      onlyWithImage: ONLY_WITH_IMAGE,
       maxExercisesToProcess: MAX_EXERCISES_TO_PROCESS,
       wgerLangEs: WGER_LANG_ES,
       inserted,
@@ -570,9 +578,11 @@ app.post("/exercises/sync", async (_req, res) => {
       relationsInserted,
       skipped: {
         noSpanish: skippedNoSpanish,
+        noImage: skippedNoImage,
         garbage: skippedGarbage,
         duplicateName: skippedDuplicates,
       },
+      note: "Si ves image_url NULL es porque ya estaban en la BD. Usa POST /exercises/reset y luego /exercises/sync (y en Docker, levanta con --build).",
     });
   } catch (error) {
     await conn.rollback();
@@ -590,8 +600,16 @@ app.post("/exercises/sync", async (_req, res) => {
 // Lectura para Angular
 // ===============================
 app.get("/exercises", async (_req, res) => {
+  // IMPORTANTE: para asegurar que Angular no reciba NULL, filtramos también aquí
+  // (por si quedó algún registro viejo antes del reset).
   const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT id, wger_id, name, description_text, image_url FROM exercises ORDER BY name LIMIT 200"
+    `
+    SELECT id, wger_id, name, description_text, image_url
+    FROM exercises
+    WHERE image_url IS NOT NULL AND image_url <> ''
+    ORDER BY name
+    LIMIT 200
+    `
   );
   res.json(rows);
 });
