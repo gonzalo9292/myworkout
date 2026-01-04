@@ -1,6 +1,8 @@
+// src/app/pages/exercises/exercises-page.ts
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { ExercisesApi } from '../../core/services/exercises-api';
 import { ExerciseListItem } from '../../core/models/exercises.model';
 
@@ -19,7 +21,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
           class="search"
           type="text"
           placeholder="Buscar por nombre..."
-          [(ngModel)]="q"
+          [ngModel]="q()"
           (ngModelChange)="onQueryChange($event)"
         />
 
@@ -38,12 +40,11 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
       </section>
 
       <section *ngIf="!loading() && !error()" class="grid">
-        <article class="card" *ngFor="let ex of paged()">
+        <article class="card" *ngFor="let ex of paged(); trackBy: trackById">
           <div class="thumb">
             <img [src]="imgSrc(ex)" [alt]="ex.name" loading="lazy" />
           </div>
 
-          <!-- IMPORTANTE: body flexible para empujar actions abajo -->
           <div class="card-body">
             <div class="title" [title]="ex.name">{{ ex.name }}</div>
 
@@ -52,7 +53,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
             </div>
 
             <div class="actions">
-              <button class="btn" (click)="openDetail(ex.id)">
+              <button class="btn" type="button" (click)="openDetail(ex.id)">
                 Ver detalle
               </button>
             </div>
@@ -63,6 +64,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
       <section *ngIf="!loading() && !error()" class="pager">
         <button
           class="btn ghost"
+          type="button"
           (click)="prevPage()"
           [disabled]="page() === 1"
         >
@@ -73,6 +75,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
 
         <button
           class="btn ghost"
+          type="button"
           (click)="nextPage()"
           [disabled]="page() === totalPages()"
         >
@@ -82,7 +85,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         <div class="perpage">
           <span class="muted">Por página:</span>
           <select
-            [(ngModel)]="pageSize"
+            [ngModel]="pageSize()"
             (ngModelChange)="onPageSizeChange($event)"
           >
             <option [ngValue]="12">12</option>
@@ -168,15 +171,12 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         border-radius: 14px;
         overflow: hidden;
         background: #fff;
-
-        /* clave: card ocupa toda la celda y permite empujar acciones abajo */
         display: flex;
         flex-direction: column;
         height: 100%;
         min-height: 260px;
       }
 
-      /* imagen con alto fijo => cards consistentes */
       .thumb {
         height: 160px;
         background: #f6f6f6;
@@ -197,42 +197,30 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         display: flex;
         flex-direction: column;
         gap: 10px;
-
-        /* clave: rellena el espacio restante */
         flex: 1;
       }
 
       .title {
         font-weight: 800;
         line-height: 1.2;
-
-        /* reserva 2 líneas SIEMPRE */
         min-height: calc(1.2em * 2);
-
-        /* y recorta a 2 líneas si se pasa */
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
       }
 
-      /* recorte consistente del texto */
       .desc {
         font-size: 13px;
         opacity: 0.75;
-
-        /* reserva 3 líneas SIEMPRE */
         line-height: 1.35;
         min-height: calc(1.35em * 3);
-
-        /* recorta a 3 líneas */
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
       }
 
-      /* clave: acciones abajo */
       .actions {
         margin-top: auto;
         display: flex;
@@ -280,23 +268,20 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
 })
 export class ExercisesPage {
   private api = inject(ExercisesApi);
+  private router = inject(Router);
 
-  // estado
   all = signal<ExerciseListItem[]>([]);
   loading = signal(true);
   error = signal<string | null>(null);
 
-  // filtros (como signal para que computed sea reactivo)
   q = signal('');
 
-  // paginación
   page = signal(1);
   pageSize = signal(24);
 
   constructor() {
     this.load();
 
-    // si cambia q o pageSize, volvemos a página 1
     effect(() => {
       this.q();
       this.pageSize();
@@ -320,7 +305,6 @@ export class ExercisesPage {
     });
   }
 
-  // Normaliza para buscar bien: sin acentos y en minúsculas
   private normalize(s: string): string {
     return (s ?? '')
       .toLowerCase()
@@ -334,21 +318,16 @@ export class ExercisesPage {
   }
 
   onPageSizeChange(value: number) {
-    // value viene como number por [ngValue]
     this.pageSize.set(Number(value) || 24);
   }
 
   filtered = computed(() => {
     const query = this.normalize(this.q());
-
     if (!query) return this.all();
 
     return this.all().filter((ex) => {
       const name = this.normalize(ex.name ?? '');
       return name.includes(query);
-      // Si quieres incluir descripción:
-      // const desc = this.normalize(ex.description_text ?? '');
-      // return name.includes(query) || desc.includes(query);
     });
   });
 
@@ -374,12 +353,15 @@ export class ExercisesPage {
   }
 
   imgSrc(ex: ExerciseListItem) {
-    // ya todas tienen, pero por seguridad mantenemos fallback
     return ex.image_url || 'https://via.placeholder.com/640x360?text=MyWorkout';
   }
 
+  trackById(_index: number, item: ExerciseListItem) {
+    return item.id;
+  }
+
   openDetail(id: number) {
-    // siguiente paso: ruta /exercises/:id o modal
-    alert(`Detalle del ejercicio ${id} (siguiente paso)`);
+    // Navega al detalle: /exercises/:id
+    this.router.navigate(['/exercises', id]);
   }
 }
