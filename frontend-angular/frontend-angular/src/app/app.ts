@@ -29,6 +29,12 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
           >Rutinas</a
         >
         <a
+          routerLink="/workouts"
+          routerLinkActive="active"
+          [routerLinkActiveOptions]="{ exact: true }"
+          >Entrenamientos</a
+        >
+        <a
           routerLink="/progress"
           routerLinkActive="active"
           [routerLinkActiveOptions]="{ exact: true }"

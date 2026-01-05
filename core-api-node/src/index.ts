@@ -742,7 +742,6 @@ app.get("/routines/:id", async (req, res) => {
       ri.position,
       ri.sets,
       ri.reps,
-      ri.weight_kg,
       ri.notes,
       e.name AS exercise_name,
       e.image_url AS exercise_image_url
@@ -827,30 +826,20 @@ app.delete("/routines/:id", async (req, res) => {
 
 // POST /routines/:id/items -> añadir ejercicio a la rutina
 // body: { exerciseId, position?, sets?, reps?, restSeconds?, notes? }
+// POST /routines/:id/items -> añadir ejercicio a la rutina
+// body: { exerciseId, position?, sets?, reps?, notes? }
 app.post("/routines/:id/items", async (req, res) => {
   const routineId = Number(req.params.id);
   if (!routineId) return res.status(400).json({ message: "ID inválido" });
 
-  const { exerciseId, position, sets, reps, weightKg, notes } = req.body ?? {};
+  const { exerciseId, position, sets, reps, notes } = req.body ?? {};
 
   const exId = Number(exerciseId);
   if (!exId) {
     return res.status(400).json({ message: "exerciseId es obligatorio" });
   }
 
-  // weightKg opcional: null/undefined/"" => null
-  const weight =
-    weightKg === null || weightKg === undefined || weightKg === ""
-      ? null
-      : Number(weightKg);
-
-  if (weight !== null && (!Number.isFinite(weight) || weight < 0)) {
-    return res
-      .status(400)
-      .json({ message: "weightKg debe ser un número >= 0" });
-  }
-
-  // sets opcional: lo normalizamos a number o null
+  // sets opcional
   const cleanSets =
     sets === null || sets === undefined || sets === "" ? null : Number(sets);
 
@@ -858,9 +847,14 @@ app.post("/routines/:id/items", async (req, res) => {
     return res.status(400).json({ message: "sets debe ser un número >= 1" });
   }
 
-  const cleanReps = reps === null || reps === undefined ? null : String(reps);
+  // reps opcional (texto libre)
+  const cleanReps =
+    reps === null || reps === undefined || reps === "" ? null : String(reps);
+
   const cleanNotes =
-    notes === null || notes === undefined ? null : String(notes);
+    notes === null || notes === undefined || notes === ""
+      ? null
+      : String(notes);
 
   const conn = await pool.getConnection();
   try {
@@ -890,9 +884,11 @@ app.post("/routines/:id/items", async (req, res) => {
     let pos = Number(position);
     if (!pos || pos < 1) {
       const [maxRows] = await conn.query<RowDataPacket[]>(
-        `SELECT COALESCE(MAX(position), 0) AS maxPos
-         FROM routine_items
-         WHERE routine_id = ?`,
+        `
+        SELECT COALESCE(MAX(position), 0) AS maxPos
+        FROM routine_items
+        WHERE routine_id = ?
+        `,
         [routineId]
       );
       pos = Number(maxRows[0].maxPos) + 1;
@@ -901,13 +897,14 @@ app.post("/routines/:id/items", async (req, res) => {
     const [result] = await conn.query<ResultSetHeader>(
       `
       INSERT INTO routine_items
-        (routine_id, exercise_id, position, sets, reps, weight_kg, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (routine_id, exercise_id, position, sets, reps, notes)
+      VALUES (?, ?, ?, ?, ?, ?)
       `,
-      [routineId, exId, pos, cleanSets, cleanReps, weight, cleanNotes]
+      [routineId, exId, pos, cleanSets, cleanReps, cleanNotes]
     );
 
     await conn.commit();
+
     res.status(201).json({
       id: result.insertId,
       routine_id: routineId,
@@ -915,7 +912,6 @@ app.post("/routines/:id/items", async (req, res) => {
       position: pos,
       sets: cleanSets,
       reps: cleanReps,
-      weight_kg: weight,
       notes: cleanNotes,
     });
   } catch (e) {
@@ -952,6 +948,374 @@ app.delete("/routines/:id/items/:itemId", async (req, res) => {
   } catch (e) {
     console.error("[ROUTINES] Error en DELETE /routines/:id/items/:itemId:", e);
     res.status(500).json({ message: "Error eliminando item" });
+  }
+});
+
+type WorkoutRow = {
+  id: number;
+  workout_date: string; // DATE en MySQL viene como string o Date según config
+  notes: string | null;
+  created_at: Date;
+};
+
+type WorkoutItemRow = {
+  id: number;
+  workout_id: number;
+  exercise_id: number;
+  position: number;
+  notes: string | null;
+};
+
+type WorkoutSetRow = {
+  id: number;
+  workout_item_id: number;
+  set_index: number;
+  reps: number | null;
+  weight_kg: number | null;
+};
+
+// ===============================
+// WORKOUTS (Entrenamientos) - MVP
+// ===============================
+
+// GET /workouts?date=YYYY-MM-DD  -> entreno por fecha
+app.get("/workouts", async (req, res) => {
+  const date = String(req.query.date ?? "").trim();
+
+  if (!date) {
+    // lista simple (últimos 30)
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `
+        SELECT id, workout_date, notes, created_at
+        FROM workouts
+        ORDER BY workout_date DESC
+        LIMIT 30
+        `
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error("[WORKOUTS] Error listando workouts:", e);
+      return res.status(500).json({ message: "Error listando entrenamientos" });
+    }
+  }
+
+  // validar formato básico YYYY-MM-DD
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ message: "date debe ser YYYY-MM-DD" });
+  }
+
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT id, workout_date, notes, created_at
+      FROM workouts
+      WHERE workout_date = ?
+      LIMIT 1
+      `,
+      [date]
+    );
+
+    if (rows.length === 0) return res.json(null);
+    return res.json(rows[0]);
+  } catch (e) {
+    console.error("[WORKOUTS] Error en GET /workouts?date=:", e);
+    return res.status(500).json({ message: "Error consultando entrenamiento" });
+  }
+});
+
+// POST /workouts  body: { date: YYYY-MM-DD, notes?: string }
+app.post("/workouts", async (req, res) => {
+  const { date, notes } = req.body ?? {};
+  const cleanDate = String(date ?? "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    return res
+      .status(400)
+      .json({ message: "date es obligatorio (YYYY-MM-DD)" });
+  }
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `
+      INSERT INTO workouts (workout_date, notes)
+      VALUES (?, ?)
+      `,
+      [cleanDate, notes ?? null]
+    );
+
+    return res.status(201).json({
+      id: result.insertId,
+      workout_date: cleanDate,
+      notes: notes ?? null,
+    });
+  } catch (e: any) {
+    // si dejaste UNIQUE por fecha, aquí saltará duplicado
+    if (String(e?.code) === "ER_DUP_ENTRY") {
+      return res
+        .status(409)
+        .json({ message: "Ya existe un entrenamiento para esa fecha" });
+    }
+
+    console.error("[WORKOUTS] Error en POST /workouts:", e);
+    return res.status(500).json({ message: "Error creando entrenamiento" });
+  }
+});
+
+// GET /workouts/:id  -> detalle completo
+app.get("/workouts/:id", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  if (!workoutId) return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    const [wRows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT id, workout_date, notes, created_at
+      FROM workouts
+      WHERE id = ?
+      `,
+      [workoutId]
+    );
+    if (wRows.length === 0)
+      return res.status(404).json({ message: "Entrenamiento no encontrado" });
+
+    const workout = wRows[0];
+
+    const [items] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT
+        wi.id,
+        wi.workout_id,
+        wi.exercise_id,
+        wi.position,
+        wi.notes,
+        e.name AS exercise_name,
+        e.image_url AS exercise_image_url
+      FROM workout_items wi
+      JOIN exercises e ON e.id = wi.exercise_id
+      WHERE wi.workout_id = ?
+      ORDER BY wi.position ASC, wi.id ASC
+      `,
+      [workoutId]
+    );
+
+    // sets
+    const itemIds = items.map((it: any) => it.id);
+    let setsByItem: Record<number, any[]> = {};
+
+    if (itemIds.length > 0) {
+      const [setRows] = await pool.query<RowDataPacket[]>(
+        `
+        SELECT id, workout_item_id, set_index, reps, weight_kg
+        FROM workout_sets
+        WHERE workout_item_id IN (${itemIds.map(() => "?").join(",")})
+        ORDER BY workout_item_id ASC, set_index ASC, id ASC
+        `,
+        itemIds
+      );
+
+      for (const s of setRows as any[]) {
+        const k = Number(s.workout_item_id);
+        setsByItem[k] = setsByItem[k] ?? [];
+        setsByItem[k].push(s);
+      }
+    }
+
+    const enriched = items.map((it: any) => ({
+      ...it,
+      sets: setsByItem[Number(it.id)] ?? [],
+    }));
+
+    return res.json({
+      ...workout,
+      items: enriched,
+    });
+  } catch (e) {
+    console.error("[WORKOUTS] Error en GET /workouts/:id:", e);
+    return res.status(500).json({ message: "Error cargando entrenamiento" });
+  }
+});
+
+// POST /workouts/:id/items  body: { exerciseId, position?, notes? }
+app.post("/workouts/:id/items", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  if (!workoutId) return res.status(400).json({ message: "ID inválido" });
+
+  const { exerciseId, position, notes } = req.body ?? {};
+  const exId = Number(exerciseId);
+  if (!exId)
+    return res.status(400).json({ message: "exerciseId es obligatorio" });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [wRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM workouts WHERE id = ?`,
+      [workoutId]
+    );
+    if (wRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Entrenamiento no encontrado" });
+    }
+
+    const [eRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM exercises WHERE id = ?`,
+      [exId]
+    );
+    if (eRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    let pos = Number(position);
+    if (!pos || pos < 1) {
+      const [maxRows] = await conn.query<RowDataPacket[]>(
+        `SELECT COALESCE(MAX(position), 0) AS maxPos FROM workout_items WHERE workout_id = ?`,
+        [workoutId]
+      );
+      pos = Number(maxRows[0].maxPos) + 1;
+    }
+
+    const [result] = await conn.query<ResultSetHeader>(
+      `
+      INSERT INTO workout_items (workout_id, exercise_id, position, notes)
+      VALUES (?, ?, ?, ?)
+      `,
+      [workoutId, exId, pos, notes ?? null]
+    );
+
+    await conn.commit();
+    return res.status(201).json({
+      id: result.insertId,
+      workout_id: workoutId,
+      exercise_id: exId,
+      position: pos,
+      notes: notes ?? null,
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error("[WORKOUTS] Error en POST /workouts/:id/items:", e);
+    return res
+      .status(500)
+      .json({ message: "Error añadiendo ejercicio al entreno" });
+  } finally {
+    conn.release();
+  }
+});
+
+// DELETE /workouts/:id/items/:itemId
+app.delete("/workouts/:id/items/:itemId", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  if (!workoutId || !itemId)
+    return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `DELETE FROM workout_items WHERE id = ? AND workout_id = ?`,
+      [itemId, workoutId]
+    );
+    if (result.affectedRows === 0)
+      return res.status(404).json({ message: "Item no encontrado" });
+    return res.json({ message: "Ejercicio eliminado del entreno" });
+  } catch (e) {
+    console.error("[WORKOUTS] Error en DELETE item:", e);
+    return res.status(500).json({ message: "Error eliminando item" });
+  }
+});
+
+// POST /workouts/:id/items/:itemId/sets  body: { setIndex, reps?, weightKg? }
+app.post("/workouts/:id/items/:itemId/sets", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  if (!workoutId || !itemId)
+    return res.status(400).json({ message: "ID inválido" });
+
+  const { setIndex, reps, weightKg } = req.body ?? {};
+  const idx = Number(setIndex);
+
+  if (!idx || idx < 1) {
+    return res.status(400).json({ message: "setIndex es obligatorio (>= 1)" });
+  }
+
+  const repsVal = reps != null ? Number(reps) : null;
+  if (repsVal != null && (!Number.isFinite(repsVal) || repsVal < 0)) {
+    return res.status(400).json({ message: "reps inválido" });
+  }
+
+  const wVal = weightKg != null ? Number(weightKg) : null;
+  if (wVal != null && (!Number.isFinite(wVal) || wVal < 0)) {
+    return res.status(400).json({ message: "weightKg inválido" });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // validar que item pertenece al workout
+    const [itRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM workout_items WHERE id = ? AND workout_id = ?`,
+      [itemId, workoutId]
+    );
+    if (itRows.length === 0) {
+      await conn.rollback();
+      return res
+        .status(404)
+        .json({ message: "Item no encontrado en este entrenamiento" });
+    }
+
+    const [result] = await conn.query<ResultSetHeader>(
+      `
+      INSERT INTO workout_sets (workout_item_id, set_index, reps, weight_kg)
+      VALUES (?, ?, ?, ?)
+      `,
+      [itemId, idx, repsVal, wVal]
+    );
+
+    await conn.commit();
+    return res.status(201).json({
+      id: result.insertId,
+      workout_item_id: itemId,
+      set_index: idx,
+      reps: repsVal,
+      weight_kg: wVal,
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error("[WORKOUTS] Error en POST sets:", e);
+    return res.status(500).json({ message: "Error añadiendo serie" });
+  } finally {
+    conn.release();
+  }
+});
+
+// DELETE /workouts/:id/items/:itemId/sets/:setId
+app.delete("/workouts/:id/items/:itemId/sets/:setId", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  const setId = Number(req.params.setId);
+  if (!workoutId || !itemId || !setId)
+    return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    // asegurar pertenencia
+    const [result] = await pool.query<ResultSetHeader>(
+      `
+      DELETE ws
+      FROM workout_sets ws
+      JOIN workout_items wi ON wi.id = ws.workout_item_id
+      WHERE ws.id = ? AND ws.workout_item_id = ? AND wi.workout_id = ?
+      `,
+      [setId, itemId, workoutId]
+    );
+
+    if (result.affectedRows === 0)
+      return res.status(404).json({ message: "Serie no encontrada" });
+    return res.json({ message: "Serie eliminada" });
+  } catch (e) {
+    console.error("[WORKOUTS] Error en DELETE set:", e);
+    return res.status(500).json({ message: "Error eliminando serie" });
   }
 });
 

@@ -72,18 +72,6 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
             </label>
 
             <label class="field">
-              <span class="label">Peso (kg)</span>
-              <input
-                class="inp"
-                type="number"
-                min="0"
-                step="0.5"
-                [(ngModel)]="weightKg"
-                placeholder="Vacío = sin peso"
-              />
-            </label>
-
-            <label class="field">
               <span class="label">Notas (opcional)</span>
               <input
                 class="inp"

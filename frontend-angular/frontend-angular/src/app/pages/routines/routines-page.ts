@@ -105,7 +105,6 @@ import { RouterModule } from '@angular/router';
         padding: 6px 10px;
         border-radius: 999px;
         background: #f4f4f4;
-        font-weight: 800;
         font-size: 12px;
       }
 
@@ -140,9 +139,6 @@ import { RouterModule } from '@angular/router';
         flex: 1;
         min-width: 0;
       }
-      .name {
-        font-weight: 900;
-      }
       .notes {
         opacity: 0.75;
         font-size: 13px;
@@ -153,7 +149,6 @@ import { RouterModule } from '@angular/router';
         border: none;
         border-radius: 12px;
         padding: 10px 12px;
-        font-weight: 900;
         cursor: pointer;
         background: #111;
         color: #fff;

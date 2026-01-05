@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS routine_items (
   position INT NOT NULL DEFAULT 1,
   sets INT NULL,
   reps VARCHAR(50) NULL,
-  weight_kg DECIMAL(6,2) NULL,
   notes VARCHAR(255) NULL,
   PRIMARY KEY (id),
   KEY ix_ri_routine (routine_id),
@@ -83,3 +82,42 @@ CREATE TABLE IF NOT EXISTS routine_items (
     FOREIGN KEY (exercise_id) REFERENCES exercises(id)
     ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS workouts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  workout_date DATE NOT NULL,
+  notes VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY ux_workout_date (workout_date)
+);
+CREATE TABLE IF NOT EXISTS workout_items (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  workout_id BIGINT UNSIGNED NOT NULL,
+  exercise_id BIGINT UNSIGNED NOT NULL,
+  position INT NOT NULL DEFAULT 1,
+  notes VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  KEY ix_wi_workout (workout_id),
+  KEY ix_wi_exercise (exercise_id),
+  CONSTRAINT fk_wi_workout
+    FOREIGN KEY (workout_id) REFERENCES workouts(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_wi_exercise
+    FOREIGN KEY (exercise_id) REFERENCES exercises(id)
+    ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS workout_sets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  workout_item_id BIGINT UNSIGNED NOT NULL,
+  set_index INT NOT NULL,
+  reps INT NULL,
+  weight_kg DECIMAL(6,2) NULL,
+  PRIMARY KEY (id),
+  KEY ix_ws_item (workout_item_id),
+  CONSTRAINT fk_ws_item
+    FOREIGN KEY (workout_item_id) REFERENCES workout_items(id)
+    ON DELETE CASCADE
+);
+
+
+
