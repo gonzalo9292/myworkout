@@ -1,8 +1,9 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RoutinesApi, RoutineListItem } from '../../core/services/routines-api';
 import { RouterModule } from '@angular/router';
+
+import { RoutinesApi, RoutineListItem } from '../../core/services/routines-api';
 
 @Component({
   standalone: true,
@@ -50,9 +51,20 @@ import { RouterModule } from '@angular/router';
             <div class="notes" *ngIf="r.notes">{{ r.notes }}</div>
           </div>
 
-          <a class="btn ghost" [routerLink]="['/routines', r.id]"
-            >Ver detalle</a
-          >
+          <div class="actions">
+            <a class="btn ghost" [routerLink]="['/routines', r.id]">
+              Ver detalle
+            </a>
+
+            <button
+              class="btn danger"
+              (click)="deleteRoutine(r.id)"
+              [disabled]="deletingId() === r.id"
+              title="Eliminar rutina"
+            >
+              {{ deletingId() === r.id ? 'Eliminando…' : 'Eliminar' }}
+            </button>
+          </div>
         </article>
 
         <p *ngIf="routines().length === 0" class="muted">
@@ -139,10 +151,19 @@ import { RouterModule } from '@angular/router';
         flex: 1;
         min-width: 0;
       }
+      .name {
+        font-weight: 900;
+      }
       .notes {
         opacity: 0.75;
         font-size: 13px;
         margin-top: 2px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
       }
 
       .btn {
@@ -156,10 +177,15 @@ import { RouterModule } from '@angular/router';
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        white-space: nowrap;
+        font-weight: 900;
       }
       .btn.ghost {
         background: #f4f4f4;
         color: #111;
+      }
+      .btn.danger {
+        background: #2b2b2b;
       }
       .btn:disabled {
         opacity: 0.5;
@@ -179,6 +205,8 @@ export class RoutinesPage {
 
   newName = '';
   newNotes = '';
+
+  deletingId = signal<number | null>(null);
 
   constructor() {
     this.load();
@@ -217,6 +245,27 @@ export class RoutinesPage {
       error: (e) => {
         this.error.set(e?.message ?? 'Error creando rutina');
         this.creating.set(false);
+      },
+    });
+  }
+
+  deleteRoutine(id: number) {
+    const ok = confirm(
+      '¿Eliminar esta rutina?\n\nSe borrarán también sus ejercicios (cascade).'
+    );
+    if (!ok) return;
+
+    this.deletingId.set(id);
+    this.error.set(null);
+
+    this.api.delete(id).subscribe({
+      next: () => {
+        this.deletingId.set(null);
+        this.load();
+      },
+      error: (e) => {
+        this.deletingId.set(null);
+        this.error.set(e?.message ?? 'Error eliminando rutina');
       },
     });
   }

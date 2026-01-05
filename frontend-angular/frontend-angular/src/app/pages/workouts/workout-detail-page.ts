@@ -29,12 +29,14 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
       <section *ngIf="!loading() && !error() && workout() as w" class="content">
         <header class="header">
           <div>
-            <h1 class="title">Entrenamiento · {{ w.workout_date }}</h1>
+            <h1 class="title">{{ formatDate(w.workout_date) }}</h1>
             <p class="muted" *ngIf="w.notes">{{ w.notes }}</p>
             <p class="muted" *ngIf="!w.notes">Sin notas.</p>
           </div>
 
-          <div class="pill">Ejercicios: {{ w.items?.length ?? 0 }}</div>
+          <div class="right">
+            <div class="pill">Ejercicios: {{ w.items?.length ?? 0 }}</div>
+          </div>
         </header>
 
         <!-- Añadir ejercicio -->
@@ -71,7 +73,8 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
           </div>
 
           <p class="hint muted">
-            Después podrás registrar las series con reps y peso (peso opcional).
+            Añade ejercicios y luego registra series con reps y peso (peso
+            opcional).
           </p>
         </section>
 
@@ -85,101 +88,130 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
 
           <div class="items" *ngIf="(w.items?.length ?? 0) > 0">
             <article class="item" *ngFor="let it of w.items">
-              <div class="thumb">
-                <img
-                  [src]="it.exercise_image_url || placeholder"
-                  [alt]="it.exercise_name"
-                  loading="lazy"
-                />
-              </div>
+              <!-- Cabecera del ejercicio -->
+              <div class="head">
+                <div class="thumb">
+                  <img
+                    [src]="it.exercise_image_url || placeholder"
+                    [alt]="it.exercise_name"
+                    loading="lazy"
+                  />
+                </div>
 
-              <div class="info">
-                <div class="name">{{ it.exercise_name }}</div>
-                <div class="notes muted" *ngIf="it.notes">{{ it.notes }}</div>
+                <div class="head-info">
+                  <div class="name">{{ it.exercise_name }}</div>
 
-                <!-- sets list -->
-                <div class="sets" *ngIf="(it.sets?.length ?? 0) > 0">
-                  <div class="set-row" *ngFor="let s of it.sets">
-                    <span class="tag">Serie {{ s.set_index }}</span>
+                  <div class="sub muted" *ngIf="it.notes">{{ it.notes }}</div>
+                  <div class="sub muted" *ngIf="!it.notes">Sin notas</div>
 
-                    <span class="meta">
-                      <strong *ngIf="s.reps != null">{{ s.reps }}</strong
-                      ><span *ngIf="s.reps == null" class="muted">—</span>
-                      reps
+                  <!-- Resumen sets -->
+                  <div class="sets-inline" *ngIf="(it.sets?.length ?? 0) > 0">
+                    <span class="chip" *ngFor="let s of it.sets">
+                      <span class="chip-title">S{{ s.set_index }}</span>
+                      <span class="chip-val">
+                        <strong *ngIf="s.reps != null">{{ s.reps }}</strong>
+                        <span *ngIf="s.reps == null" class="muted">—</span>
+                        reps
+                      </span>
+                      <span class="chip-val">
+                        <strong *ngIf="s.weight_kg != null">{{
+                          s.weight_kg
+                        }}</strong>
+                        <span *ngIf="s.weight_kg == null" class="muted">—</span>
+                        kg
+                      </span>
+
+                      <button
+                        class="chip-x"
+                        (click)="deleteSet(it.id, s.id)"
+                        [disabled]="deletingSetId() === s.id"
+                        title="Eliminar serie"
+                      >
+                        {{ deletingSetId() === s.id ? '…' : 'X' }}
+                      </button>
                     </span>
+                  </div>
 
-                    <span class="meta">
-                      <strong *ngIf="s.weight_kg != null">{{
-                        s.weight_kg
-                      }}</strong
-                      ><span *ngIf="s.weight_kg == null" class="muted">—</span>
-                      kg
-                    </span>
-
-                    <button
-                      class="btn tiny danger"
-                      (click)="deleteSet(it.id, s.id)"
-                      [disabled]="deletingSetId() === s.id"
-                    >
-                      {{ deletingSetId() === s.id ? '…' : 'X' }}
-                    </button>
+                  <div class="muted small" *ngIf="(it.sets?.length ?? 0) === 0">
+                    Aún no has registrado series.
                   </div>
                 </div>
 
-                <!-- add set form -->
-                <div class="addset">
-                  <label class="mini">
-                    <span class="mini-label">Reps</span>
-                    <input
-                      class="mini-inp"
-                      type="number"
-                      min="0"
-                      step="1"
-                      [(ngModel)]="repsByItem[it.id]"
-                    />
-                  </label>
-
-                  <label class="mini">
-                    <span class="mini-label">Kg (opcional)</span>
-                    <input
-                      class="mini-inp"
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      [(ngModel)]="weightByItem[it.id]"
-                    />
-                  </label>
-
+                <div class="head-actions">
                   <button
-                    class="btn tiny"
-                    (click)="addSet(it)"
+                    class="btn ghost"
+                    (click)="toggleAddSet(it)"
                     [disabled]="addingSetItemId() === it.id"
                   >
+                    {{ isAddSetOpen(it.id) ? 'Cerrar' : 'Añadir serie' }}
+                  </button>
+
+                  <button
+                    class="btn danger"
+                    (click)="deleteItem(it.id)"
+                    [disabled]="deletingItemId() === it.id"
+                  >
                     {{
-                      addingSetItemId() === it.id
-                        ? 'Añadiendo…'
-                        : 'Añadir serie'
+                      deletingItemId() === it.id
+                        ? 'Eliminando…'
+                        : 'Eliminar ejercicio'
                     }}
                   </button>
                 </div>
-
-                <p class="mini-hint muted">
-                  Si no hay peso (abdominales, dominadas, etc.), deja Kg vacío.
-                </p>
               </div>
 
-              <div class="actions">
-                <button
-                  class="btn danger"
-                  (click)="deleteItem(it.id)"
-                  [disabled]="deletingItemId() === it.id"
-                >
-                  {{
-                    deletingItemId() === it.id
-                      ? 'Eliminando…'
-                      : 'Eliminar ejercicio'
-                  }}
-                </button>
+              <!-- Formulario añadir serie (colapsable) -->
+              <div class="addset-wrap" *ngIf="isAddSetOpen(it.id)">
+                <div class="addset-card">
+                  <div class="addset-title">Nueva serie</div>
+
+                  <div class="addset-form">
+                    <label class="mini">
+                      <span class="mini-label">Reps</span>
+                      <input
+                        class="mini-inp"
+                        type="number"
+                        min="0"
+                        step="1"
+                        [(ngModel)]="repsByItem[it.id]"
+                      />
+                    </label>
+
+                    <label class="mini">
+                      <span class="mini-label">Kg (opcional)</span>
+                      <input
+                        class="mini-inp"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        [(ngModel)]="weightByItem[it.id]"
+                      />
+                    </label>
+
+                    <div class="addset-actions">
+                      <button
+                        class="btn"
+                        (click)="addSet(it)"
+                        [disabled]="addingSetItemId() === it.id"
+                      >
+                        {{
+                          addingSetItemId() === it.id
+                            ? 'Guardando…'
+                            : 'Guardar serie'
+                        }}
+                      </button>
+
+                      <button class="btn ghost" (click)="toggleAddSet(it)">
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+
+                  <p class="mini-hint muted">
+                    Si no hay peso (abdominales, dominadas, etc.), deja Kg
+                    vacío.
+                  </p>
+                </div>
               </div>
             </article>
           </div>
@@ -254,15 +286,6 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         cursor: not-allowed;
       }
 
-      .btn.tiny {
-        padding: 8px 10px;
-        border-radius: 10px;
-        font-weight: 950;
-      }
-      .btn.tiny.danger {
-        background: #3a3a3a;
-      }
-
       .content {
         display: flex;
         flex-direction: column;
@@ -283,6 +306,15 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
       }
       .muted {
         opacity: 0.7;
+      }
+      .small {
+        font-size: 12.5px;
+      }
+
+      .right {
+        display: flex;
+        gap: 10px;
+        align-items: center;
       }
 
       .pill {
@@ -343,6 +375,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         margin: 10px 0 0;
         font-size: 13px;
       }
+
       .empty {
         padding: 10px 0;
       }
@@ -350,23 +383,26 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
       .items {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
       }
 
       .item {
-        display: grid;
-        grid-template-columns: 96px 1fr auto;
-        gap: 12px;
-        align-items: start;
         border: 1px solid #eee;
         border-radius: 14px;
-        padding: 12px;
         background: #fff;
+        padding: 12px;
+      }
+
+      .head {
+        display: grid;
+        grid-template-columns: 92px 1fr auto;
+        gap: 12px;
+        align-items: start;
       }
 
       .thumb {
-        width: 96px;
-        height: 72px;
+        width: 92px;
+        height: 70px;
         border-radius: 12px;
         overflow: hidden;
         background: #f6f6f6;
@@ -379,45 +415,92 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         display: block;
       }
 
-      .info {
+      .head-info {
         min-width: 0;
       }
+
       .name {
         font-weight: 950;
         line-height: 1.2;
       }
 
-      .sets {
+      .sub {
+        margin-top: 2px;
+        font-size: 13px;
+      }
+
+      .head-actions {
+        display: flex;
+        gap: 10px;
+        align-items: start;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
+
+      /* Sets inline chips */
+      .sets-inline {
         margin-top: 10px;
         display: flex;
-        flex-direction: column;
-        gap: 6px;
+        flex-wrap: wrap;
+        gap: 8px;
       }
-      .set-row {
-        display: flex;
+
+      .chip {
+        display: inline-flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         padding: 8px 10px;
         border: 1px solid #eee;
         border-radius: 12px;
         background: #fafafa;
       }
 
-      .tag {
+      .chip-title {
         font-size: 12px;
         font-weight: 950;
         background: #f4f4f4;
         border: 1px solid #ededed;
         border-radius: 999px;
-        padding: 6px 9px;
+        padding: 5px 8px;
       }
 
-      .meta {
+      .chip-val {
         font-size: 13px;
       }
 
-      .addset {
-        margin-top: 10px;
+      .chip-x {
+        border: none;
+        background: #2b2b2b;
+        color: #fff;
+        width: 28px;
+        height: 28px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 950;
+      }
+      .chip-x:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      /* Add set collapsable */
+      .addset-wrap {
+        margin-top: 12px;
+      }
+
+      .addset-card {
+        border: 1px solid #eee;
+        border-radius: 14px;
+        background: #fff;
+        padding: 12px;
+      }
+
+      .addset-title {
+        font-weight: 950;
+        margin-bottom: 10px;
+      }
+
+      .addset-form {
         display: flex;
         gap: 10px;
         align-items: end;
@@ -429,6 +512,7 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         flex-direction: column;
         gap: 6px;
       }
+
       .mini-label {
         font-size: 11px;
         font-weight: 900;
@@ -436,34 +520,40 @@ import { ExerciseListItem } from '../../core/models/exercises.model';
         text-transform: uppercase;
         letter-spacing: 0.02em;
       }
+
       .mini-inp {
-        width: 140px;
+        width: 160px;
         padding: 9px 10px;
         border: 1px solid #e6e6e6;
         border-radius: 10px;
         outline: none;
       }
 
-      .mini-hint {
-        margin: 8px 0 0;
-        font-size: 12.5px;
+      .addset-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
       }
 
-      .actions {
-        display: flex;
-        align-items: start;
-        justify-content: flex-end;
+      .mini-hint {
+        margin: 10px 0 0;
+        font-size: 12.5px;
       }
 
       @media (max-width: 980px) {
         .form {
           grid-template-columns: 1fr;
         }
-        .item {
-          grid-template-columns: 96px 1fr;
+        .head {
+          grid-template-columns: 92px 1fr;
         }
-        .actions {
+        .head-actions {
           grid-column: 1 / -1;
+          justify-content: flex-end;
+        }
+        .mini-inp {
+          width: 100%;
+          min-width: 220px;
         }
       }
     `,
@@ -494,9 +584,12 @@ export class WorkoutDetailPage {
   addingSetItemId = signal<number | null>(null);
   deletingSetId = signal<number | null>(null);
 
-  // inputs por item (evita que un input pise al de otro)
+  // inputs por item
   repsByItem: Record<number, number | null> = {};
   weightByItem: Record<number, number | null> = {};
+
+  // UI: qué item tiene el formulario de "nueva serie" abierto
+  openAddSetForItemId = signal<number | null>(null);
 
   constructor() {
     const id = Number(this.route.snapshot.paramMap.get('id'));
@@ -511,8 +604,39 @@ export class WorkoutDetailPage {
     this.loadExercises();
   }
 
+  formatDate(ymd: string): string {
+    // soporta "YYYY-MM-DD" y también ISO "YYYY-MM-DDTHH:mm:ss..."
+    if (!ymd) return ymd;
+
+    // ISO -> nos quedamos con la parte de fecha
+    const onlyDate = ymd.includes('T') ? ymd.split('T')[0] : ymd;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(onlyDate)) return ymd;
+    const [y, m, d] = onlyDate.split('-');
+    return `${d}/${m}/${y}`;
+  }
+
   goBack() {
     this.router.navigate(['/workouts']);
+  }
+
+  isAddSetOpen(itemId: number): boolean {
+    return this.openAddSetForItemId() === itemId;
+  }
+
+  toggleAddSet(it: WorkoutItem) {
+    const itemId = it.id;
+
+    // si lo abrimos, inicializamos defaults si no existen
+    if (!this.isAddSetOpen(itemId)) {
+      if (!(itemId in this.repsByItem)) this.repsByItem[itemId] = 10;
+      if (!(itemId in this.weightByItem)) this.weightByItem[itemId] = null;
+      this.openAddSetForItemId.set(itemId);
+      return;
+    }
+
+    // si ya estaba abierto, cerramos (cancelar)
+    this.openAddSetForItemId.set(null);
   }
 
   private loadWorkout() {
@@ -584,6 +708,11 @@ export class WorkoutDetailPage {
 
     this.workoutsApi.deleteItem(workoutId, itemId).subscribe({
       next: () => {
+        // si borras el item que tenía el form abierto, lo cerramos
+        if (this.openAddSetForItemId() === itemId) {
+          this.openAddSetForItemId.set(null);
+        }
+
         this.deletingItemId.set(null);
         this.loadWorkout();
       },
@@ -600,7 +729,6 @@ export class WorkoutDetailPage {
 
     const itemId = it.id;
 
-    // setIndex: siguiente (max + 1)
     const nextIndex =
       ((it.sets ?? []).reduce(
         (m, s) => Math.max(m, Number(s.set_index || 0)),
@@ -616,13 +744,11 @@ export class WorkoutDetailPage {
         ? Number(weightRaw)
         : null;
 
-    // reps: si viene, debe ser >= 0
     if (reps != null && (!Number.isFinite(reps) || reps < 0)) {
       this.error.set('Reps inválidas');
       return;
     }
 
-    // weight: si viene, >= 0
     if (weightKg != null && (!Number.isFinite(weightKg) || weightKg < 0)) {
       this.error.set('Peso inválido');
       return;
@@ -635,6 +761,7 @@ export class WorkoutDetailPage {
       .subscribe({
         next: () => {
           this.addingSetItemId.set(null);
+          this.openAddSetForItemId.set(null); // cerramos para que quede limpio
           this.loadWorkout();
         },
         error: (e) => {

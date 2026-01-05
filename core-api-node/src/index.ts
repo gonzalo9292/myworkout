@@ -978,6 +978,12 @@ type WorkoutSetRow = {
 // WORKOUTS (Entrenamientos) - MVP
 // ===============================
 
+// ===============================
+// WORKOUTS (Entrenamientos) - MVP
+// Opción A: al crear desde rutina, copiamos SOLO workout_items
+// (NO creamos filas en workout_sets; los sets los añade el usuario)
+// ===============================
+
 // GET /workouts?date=YYYY-MM-DD  -> entreno por fecha
 app.get("/workouts", async (req, res) => {
   const date = String(req.query.date ?? "").trim();
@@ -1024,9 +1030,9 @@ app.get("/workouts", async (req, res) => {
   }
 });
 
-// POST /workouts  body: { date: YYYY-MM-DD, notes?: string }
+// POST /workouts  body: { date: YYYY-MM-DD, notes?: string, routineId?: number }
 app.post("/workouts", async (req, res) => {
-  const { date, notes } = req.body ?? {};
+  const { date, notes, routineId } = req.body ?? {};
   const cleanDate = String(date ?? "").trim();
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
@@ -1035,8 +1041,21 @@ app.post("/workouts", async (req, res) => {
       .json({ message: "date es obligatorio (YYYY-MM-DD)" });
   }
 
+  const rId =
+    routineId === null || routineId === undefined || routineId === ""
+      ? null
+      : Number(routineId);
+
+  if (rId !== null && (!Number.isFinite(rId) || rId < 1)) {
+    return res.status(400).json({ message: "routineId inválido" });
+  }
+
+  const conn = await pool.getConnection();
   try {
-    const [result] = await pool.query<ResultSetHeader>(
+    await conn.beginTransaction();
+
+    // 1) crear workout
+    const [result] = await conn.query<ResultSetHeader>(
       `
       INSERT INTO workouts (workout_date, notes)
       VALUES (?, ?)
@@ -1044,13 +1063,101 @@ app.post("/workouts", async (req, res) => {
       [cleanDate, notes ?? null]
     );
 
+    const workoutId = Number(result.insertId);
+
+    // 2) si viene rutina, copiamos SOLO workout_items (NO sets)
+    if (rId) {
+      // comprobar rutina existe
+      const [rRows] = await conn.query<RowDataPacket[]>(
+        `SELECT id, name FROM routines WHERE id = ?`,
+        [rId]
+      );
+      if (rRows.length === 0) {
+        await conn.rollback();
+        return res.status(404).json({ message: "Rutina no encontrada" });
+      }
+
+      const routineName = String((rRows[0] as any)?.name ?? "").trim();
+
+      const [ritems] = await conn.query<RowDataPacket[]>(
+        `
+        SELECT exercise_id, position, notes, sets, reps
+        FROM routine_items
+        WHERE routine_id = ?
+        ORDER BY position ASC, id ASC
+        `,
+        [rId]
+      );
+
+      for (const it of ritems as any[]) {
+        const exId = Number(it.exercise_id);
+        const pos = Number(it.position) || 1;
+
+        // Nota útil: arrastramos notas y además dejamos “plan” de la rutina
+        const baseNotes = (it.notes ?? null) as string | null;
+
+        const plannedSets =
+          it.sets === null || it.sets === undefined || it.sets === ""
+            ? null
+            : Number(it.sets);
+
+        const plannedReps =
+          it.reps === null || it.reps === undefined || it.reps === ""
+            ? null
+            : String(it.reps);
+
+        const planBits: string[] = [];
+        if (plannedSets && Number.isFinite(plannedSets) && plannedSets > 0) {
+          planBits.push(`${plannedSets} series`);
+        }
+        if (plannedReps) {
+          planBits.push(`reps: ${plannedReps}`);
+        }
+
+        const plan = planBits.length ? `Plan: ${planBits.join(" · ")}` : null;
+
+        const mergedNotes =
+          baseNotes && plan ? `${baseNotes} · ${plan}` : baseNotes || plan;
+
+        await conn.query<ResultSetHeader>(
+          `
+          INSERT INTO workout_items (workout_id, exercise_id, position, notes)
+          VALUES (?, ?, ?, ?)
+          `,
+          [workoutId, exId, pos, mergedNotes ?? null]
+        );
+      }
+
+      // Opcional: añadir una nota general al workout indicando la rutina usada
+      // (sin machacar notes existentes)
+      if (routineName) {
+        const extra = `Rutina: ${routineName}`;
+        await conn.query(
+          `
+          UPDATE workouts
+          SET notes = TRIM(CONCAT(
+            COALESCE(notes,''),
+            CASE WHEN notes IS NULL OR notes='' THEN '' ELSE ' · ' END,
+            ?
+          ))
+          WHERE id = ?
+          `,
+          [extra, workoutId]
+        );
+      }
+    }
+
+    await conn.commit();
+
     return res.status(201).json({
-      id: result.insertId,
+      id: workoutId,
       workout_date: cleanDate,
       notes: notes ?? null,
+      routine_id: rId, // informativo
     });
   } catch (e: any) {
-    // si dejaste UNIQUE por fecha, aquí saltará duplicado
+    await conn.rollback();
+
     if (String(e?.code) === "ER_DUP_ENTRY") {
       return res
         .status(409)
@@ -1059,6 +1166,8 @@ app.post("/workouts", async (req, res) => {
 
     console.error("[WORKOUTS] Error en POST /workouts:", e);
     return res.status(500).json({ message: "Error creando entrenamiento" });
+  } finally {
+    conn.release();
   }
 });
 
@@ -1099,7 +1208,7 @@ app.get("/workouts/:id", async (req, res) => {
       [workoutId]
     );
 
-    // sets
+    // sets (puede que no haya ninguno si se creó desde rutina con opción A)
     const itemIds = items.map((it: any) => it.id);
     let setsByItem: Record<number, any[]> = {};
 
@@ -1174,7 +1283,7 @@ app.post("/workouts/:id/items", async (req, res) => {
         `SELECT COALESCE(MAX(position), 0) AS maxPos FROM workout_items WHERE workout_id = ?`,
         [workoutId]
       );
-      pos = Number(maxRows[0].maxPos) + 1;
+      pos = Number((maxRows[0] as any).maxPos) + 1;
     }
 
     const [result] = await conn.query<ResultSetHeader>(
@@ -1253,7 +1362,6 @@ app.post("/workouts/:id/items/:itemId/sets", async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // validar que item pertenece al workout
     const [itRows] = await conn.query<RowDataPacket[]>(
       `SELECT id FROM workout_items WHERE id = ? AND workout_id = ?`,
       [itemId, workoutId]
@@ -1299,7 +1407,6 @@ app.delete("/workouts/:id/items/:itemId/sets/:setId", async (req, res) => {
     return res.status(400).json({ message: "ID inválido" });
 
   try {
-    // asegurar pertenencia
     const [result] = await pool.query<ResultSetHeader>(
       `
       DELETE ws
@@ -1318,6 +1425,29 @@ app.delete("/workouts/:id/items/:itemId/sets/:setId", async (req, res) => {
     return res.status(500).json({ message: "Error eliminando serie" });
   }
 });
+
+// DELETE /workouts/:id -> borrar entrenamiento completo (cascade borra items + sets)
+app.delete("/workouts/:id", async (req, res) => {
+  const workoutId = Number(req.params.id);
+  if (!workoutId) return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `DELETE FROM workouts WHERE id = ?`,
+      [workoutId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Entrenamiento no encontrado" });
+    }
+
+    return res.json({ message: "Entrenamiento eliminado" });
+  } catch (e) {
+    console.error("[WORKOUTS] Error en DELETE /workouts/:id:", e);
+    return res.status(500).json({ message: "Error eliminando entrenamiento" });
+  }
+});
+
 
 // ===============================
 app.listen(PORT, () => {

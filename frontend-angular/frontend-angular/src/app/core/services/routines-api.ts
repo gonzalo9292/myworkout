@@ -63,4 +63,8 @@ export class RoutinesApi {
       `${this.baseUrl}/routines/${routineId}/items/${itemId}`
     );
   }
+  
+  delete(id: number) {
+    return this.http.delete(`${this.baseUrl}/routines/${id}`);
+  }
 }

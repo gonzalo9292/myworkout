@@ -7,6 +7,8 @@ import { FormsModule } from '@angular/forms';
 import { WorkoutsApi } from '../../core/services/workouts-api';
 import { WorkoutListItem } from '../../core/models/workouts.model';
 
+import { RoutinesApi, RoutineListItem } from '../../core/services/routines-api';
+
 @Component({
   standalone: true,
   imports: [CommonModule, FormsModule, RouterModule],
@@ -21,12 +23,22 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
       </header>
 
       <section class="panel">
-        <h2 class="panel-title">Entrenamiento del día</h2>
+        <h2 class="panel-title">Entrenamiento por fecha</h2>
 
         <div class="row">
           <label class="field">
             <span class="label">Fecha</span>
             <input class="inp" type="date" [(ngModel)]="selectedDate" />
+          </label>
+
+          <label class="field">
+            <span class="label">Rutina (opcional)</span>
+            <select class="inp" [(ngModel)]="selectedRoutineId">
+              <option [ngValue]="null">Sin rutina (entreno libre)</option>
+              <option *ngFor="let r of routines()" [ngValue]="r.id">
+                {{ r.name }}
+              </option>
+            </select>
           </label>
 
           <label class="field">
@@ -50,7 +62,8 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
 
         <p class="hint muted">
           Si ya existe un entrenamiento para esa fecha, se abrirá. Si no existe,
-          se creará.
+          se creará. Si eliges una rutina, se copiará automáticamente al
+          entreno.
         </p>
 
         <section *ngIf="resolveError()" class="state error">
@@ -78,14 +91,24 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
         <section *ngIf="!loading() && !error()" class="list">
           <article class="card" *ngFor="let w of recent()">
             <div class="info">
-              <div class="date">{{ w.workout_date }}</div>
+              <div class="date">{{ formatDate(w.workout_date) }}</div>
               <div class="notes muted" *ngIf="w.notes">{{ w.notes }}</div>
               <div class="notes muted" *ngIf="!w.notes">Sin notas</div>
             </div>
 
-            <a class="btn ghost" [routerLink]="['/workouts', w.id]"
-              >Ver detalle</a
-            >
+            <div class="actions">
+              <a class="btn ghost" [routerLink]="['/workouts', w.id]"
+                >Ver detalle</a
+              >
+
+              <button
+                class="btn danger"
+                (click)="deleteWorkout(w.id)"
+                [disabled]="deletingId() === w.id"
+              >
+                {{ deletingId() === w.id ? 'Eliminando…' : 'Eliminar' }}
+              </button>
+            </div>
           </article>
 
           <p class="muted" *ngIf="recent().length === 0">
@@ -136,7 +159,7 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
 
       .row {
         display: grid;
-        grid-template-columns: 240px 1fr auto;
+        grid-template-columns: 240px 280px 1fr auto;
         gap: 10px;
         align-items: end;
       }
@@ -161,6 +184,7 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
         border-radius: 10px;
         outline: none;
         min-width: 0;
+        background: #fff;
       }
 
       .btn {
@@ -180,6 +204,9 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
       .btn.ghost {
         background: #f4f4f4;
         color: #111;
+      }
+      .btn.danger {
+        background: #2b2b2b;
       }
       .btn:disabled {
         opacity: 0.55;
@@ -228,32 +255,48 @@ import { WorkoutListItem } from '../../core/models/workouts.model';
         margin-top: 2px;
         font-size: 13px;
       }
+      .actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
 
-      @media (max-width: 860px) {
+      @media (max-width: 980px) {
         .row {
           grid-template-columns: 1fr;
+        }
+        .actions {
+          width: 100%;
+          justify-content: flex-end;
+          flex-wrap: wrap;
         }
       }
     `,
   ],
 })
 export class WorkoutsPage {
-  private api = inject(WorkoutsApi);
+  private workoutsApi = inject(WorkoutsApi);
+  private routinesApi = inject(RoutinesApi);
   private router = inject(Router);
 
   loading = signal(true);
   error = signal<string | null>(null);
   recent = signal<WorkoutListItem[]>([]);
 
+  routines = signal<RoutineListItem[]>([]);
+
   selectedDate = '';
+  selectedRoutineId: number | null = null;
   notes = '';
 
   resolving = signal(false);
   resolveError = signal<string | null>(null);
 
+  deletingId = signal<number | null>(null);
+
   constructor() {
-    // fecha por defecto: hoy
     this.selectedDate = this.todayYmd();
+    this.loadRoutines();
     this.loadRecent();
   }
 
@@ -265,11 +308,46 @@ export class WorkoutsPage {
     return `${yyyy}-${mm}-${dd}`;
   }
 
+  formatDate(value: string): string {
+    if (!value) return value;
+
+    // Caso 1: "YYYY-MM-DD"
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [y, m, d] = value.split('-');
+      return `${d}/${m}/${y}`;
+    }
+
+    // Caso 2: ISO "2026-01-05T00:00:00.000Z" (o similar)
+    const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+    if (isoMatch) {
+      const [, y, m, d] = isoMatch;
+      return `${d}/${m}/${y}`;
+    }
+
+    // Caso 3: cualquier otro formato parseable
+    const dt = new Date(value);
+    if (!Number.isNaN(dt.getTime())) {
+      const dd = String(dt.getDate()).padStart(2, '0');
+      const mm = String(dt.getMonth() + 1).padStart(2, '0');
+      const yyyy = dt.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+
+    return value;
+  }
+
+  loadRoutines() {
+    this.routinesApi.list().subscribe({
+      next: (data) => this.routines.set(data ?? []),
+      error: () => this.routines.set([]),
+    });
+  }
+
   loadRecent() {
     this.loading.set(true);
     this.error.set(null);
 
-    this.api.listRecent().subscribe({
+    this.workoutsApi.listRecent().subscribe({
       next: (data) => {
         this.recent.set(data ?? []);
         this.loading.set(false);
@@ -288,7 +366,7 @@ export class WorkoutsPage {
     this.resolving.set(true);
     this.resolveError.set(null);
 
-    this.api.getByDate(date).subscribe({
+    this.workoutsApi.getByDate(date).subscribe({
       next: (existing) => {
         if (existing?.id) {
           this.resolving.set(false);
@@ -296,38 +374,68 @@ export class WorkoutsPage {
           return;
         }
 
-        // crear
         const notes = (this.notes ?? '').trim();
-        this.api.create({ date, notes: notes || null }).subscribe({
-          next: (created) => {
-            this.resolving.set(false);
-            this.loadRecent();
 
-            const id = Number(created?.id);
-            if (id) this.router.navigate(['/workouts', id]);
-            else
-              this.resolveError.set(
-                'Entrenamiento creado, pero no se recibió un ID válido.'
-              );
-          },
-          error: (e) => {
-            this.resolving.set(false);
-            if (e?.status === 409)
-              this.resolveError.set(
-                'Ya existe un entrenamiento para esa fecha.'
-              );
-            else
-              this.resolveError.set(
-                e?.message ?? 'Error creando entrenamiento'
-              );
-          },
-        });
+        this.workoutsApi
+          .create({
+            date,
+            notes: notes || null,
+            routineId: this.selectedRoutineId ?? null,
+          })
+          .subscribe({
+            next: (created) => {
+              this.resolving.set(false);
+              this.loadRecent();
+
+              const id = Number(created?.id);
+              if (id) this.router.navigate(['/workouts', id]);
+              else {
+                this.resolveError.set(
+                  'Entrenamiento creado, pero no se recibió un ID válido.'
+                );
+              }
+            },
+            error: (e) => {
+              this.resolving.set(false);
+              if (e?.status === 409) {
+                this.resolveError.set(
+                  'Ya existe un entrenamiento para esa fecha.'
+                );
+              } else {
+                this.resolveError.set(
+                  e?.message ?? 'Error creando entrenamiento'
+                );
+              }
+            },
+          });
       },
       error: (e) => {
         this.resolving.set(false);
         this.resolveError.set(
           e?.message ?? 'Error consultando entrenamiento por fecha'
         );
+      },
+    });
+  }
+
+  deleteWorkout(id: number) {
+    if (!id) return;
+
+    const ok = confirm(
+      '¿Eliminar este entrenamiento? Se borrará todo su detalle.'
+    );
+    if (!ok) return;
+
+    this.deletingId.set(id);
+
+    this.workoutsApi.delete(id).subscribe({
+      next: () => {
+        this.deletingId.set(null);
+        this.loadRecent();
+      },
+      error: (e) => {
+        this.deletingId.set(null);
+        this.error.set(e?.message ?? 'Error eliminando entrenamiento');
       },
     });
   }
