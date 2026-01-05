@@ -23,7 +23,7 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
           >Catálogo</a
         >
         <a
-          routerLink="/workouts"
+          routerLink="/routines"
           routerLinkActive="active"
           [routerLinkActiveOptions]="{ exact: true }"
           >Rutinas</a

@@ -643,6 +643,318 @@ app.get("/exercises/:id", async (req, res) => {
   });
 });
 
+type RoutineRow = {
+  id: number;
+  name: string;
+  notes: string | null;
+  created_at: Date;
+  updated_at: Date | null;
+};
+
+type RoutineItemRow = {
+  id: number;
+  routine_id: number;
+  exercise_id: number;
+  position: number;
+  sets: number | null;
+  reps: string | null;
+  rest_seconds: number | null;
+  notes: string | null;
+};
+
+// ===============================
+// ROUTINES (MVP)
+// ===============================
+
+// GET /routines -> lista de rutinas
+app.get("/routines", async (_req, res) => {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT id, name, notes, created_at, updated_at
+      FROM routines
+      ORDER BY created_at DESC
+      `
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error("[ROUTINES] Error en GET /routines:", e);
+    res.status(500).json({ message: "Error listando rutinas" });
+  }
+});
+
+// POST /routines -> crear rutina { name, notes? }
+app.post("/routines", async (req, res) => {
+  const { name, notes } = req.body ?? {};
+  const cleanName = String(name ?? "").trim();
+
+  if (!cleanName) {
+    return res.status(400).json({ message: "name es obligatorio" });
+  }
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `
+      INSERT INTO routines (name, notes)
+      VALUES (?, ?)
+      `,
+      [cleanName, notes ?? null]
+    );
+
+    res.status(201).json({
+      id: result.insertId,
+      name: cleanName,
+      notes: notes ?? null,
+    });
+  } catch (e) {
+    console.error("[ROUTINES] Error en POST /routines:", e);
+    res.status(500).json({ message: "Error creando rutina" });
+  }
+});
+
+// GET /routines/:id -> detalle (incluye items + info del ejercicio)
+app.get("/routines/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    const [rRows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT id, name, notes, created_at, updated_at
+      FROM routines
+      WHERE id = ?
+      `,
+      [id]
+    );
+
+    if (rRows.length === 0) {
+      return res.status(404).json({ message: "Rutina no encontrada" });
+    }
+
+    const routine = rRows[0];
+
+    const [items] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT
+      ri.id,
+      ri.routine_id,
+      ri.exercise_id,
+      ri.position,
+      ri.sets,
+      ri.reps,
+      ri.weight_kg,
+      ri.notes,
+      e.name AS exercise_name,
+      e.image_url AS exercise_image_url
+    FROM routine_items ri
+    JOIN exercises e ON e.id = ri.exercise_id
+    WHERE ri.routine_id = ?
+    ORDER BY ri.position ASC, ri.id ASC
+
+      `,
+      [id]
+    );
+
+    res.json({
+      ...routine,
+      items,
+    });
+  } catch (e) {
+    console.error("[ROUTINES] Error en GET /routines/:id:", e);
+    res.status(500).json({ message: "Error cargando rutina" });
+  }
+});
+
+// PUT /routines/:id -> editar { name?, notes? }
+app.put("/routines/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ message: "ID inválido" });
+
+  const { name, notes } = req.body ?? {};
+  const cleanName = name != null ? String(name).trim() : null;
+
+  try {
+    // comprobar existe
+    const [rRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM routines WHERE id = ?`,
+      [id]
+    );
+    if (rRows.length === 0) {
+      return res.status(404).json({ message: "Rutina no encontrada" });
+    }
+
+    // update parcial
+    await pool.query(
+      `
+      UPDATE routines
+      SET
+        name = COALESCE(?, name),
+        notes = COALESCE(?, notes),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [cleanName, notes ?? null, id]
+    );
+
+    res.json({ message: "Rutina actualizada" });
+  } catch (e) {
+    console.error("[ROUTINES] Error en PUT /routines/:id:", e);
+    res.status(500).json({ message: "Error actualizando rutina" });
+  }
+});
+
+// DELETE /routines/:id -> borrar rutina (cascade borra items)
+app.delete("/routines/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ message: "ID inválido" });
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `DELETE FROM routines WHERE id = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Rutina no encontrada" });
+    }
+
+    res.json({ message: "Rutina eliminada" });
+  } catch (e) {
+    console.error("[ROUTINES] Error en DELETE /routines/:id:", e);
+    res.status(500).json({ message: "Error eliminando rutina" });
+  }
+});
+
+// POST /routines/:id/items -> añadir ejercicio a la rutina
+// body: { exerciseId, position?, sets?, reps?, restSeconds?, notes? }
+app.post("/routines/:id/items", async (req, res) => {
+  const routineId = Number(req.params.id);
+  if (!routineId) return res.status(400).json({ message: "ID inválido" });
+
+  const { exerciseId, position, sets, reps, weightKg, notes } = req.body ?? {};
+
+  const exId = Number(exerciseId);
+  if (!exId) {
+    return res.status(400).json({ message: "exerciseId es obligatorio" });
+  }
+
+  // weightKg opcional: null/undefined/"" => null
+  const weight =
+    weightKg === null || weightKg === undefined || weightKg === ""
+      ? null
+      : Number(weightKg);
+
+  if (weight !== null && (!Number.isFinite(weight) || weight < 0)) {
+    return res
+      .status(400)
+      .json({ message: "weightKg debe ser un número >= 0" });
+  }
+
+  // sets opcional: lo normalizamos a number o null
+  const cleanSets =
+    sets === null || sets === undefined || sets === "" ? null : Number(sets);
+
+  if (cleanSets !== null && (!Number.isFinite(cleanSets) || cleanSets < 1)) {
+    return res.status(400).json({ message: "sets debe ser un número >= 1" });
+  }
+
+  const cleanReps = reps === null || reps === undefined ? null : String(reps);
+  const cleanNotes =
+    notes === null || notes === undefined ? null : String(notes);
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // comprobar rutina
+    const [rRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM routines WHERE id = ?`,
+      [routineId]
+    );
+    if (rRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Rutina no encontrada" });
+    }
+
+    // comprobar ejercicio existe
+    const [eRows] = await conn.query<RowDataPacket[]>(
+      `SELECT id FROM exercises WHERE id = ?`,
+      [exId]
+    );
+    if (eRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    // position por defecto: al final
+    let pos = Number(position);
+    if (!pos || pos < 1) {
+      const [maxRows] = await conn.query<RowDataPacket[]>(
+        `SELECT COALESCE(MAX(position), 0) AS maxPos
+         FROM routine_items
+         WHERE routine_id = ?`,
+        [routineId]
+      );
+      pos = Number(maxRows[0].maxPos) + 1;
+    }
+
+    const [result] = await conn.query<ResultSetHeader>(
+      `
+      INSERT INTO routine_items
+        (routine_id, exercise_id, position, sets, reps, weight_kg, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [routineId, exId, pos, cleanSets, cleanReps, weight, cleanNotes]
+    );
+
+    await conn.commit();
+    res.status(201).json({
+      id: result.insertId,
+      routine_id: routineId,
+      exercise_id: exId,
+      position: pos,
+      sets: cleanSets,
+      reps: cleanReps,
+      weight_kg: weight,
+      notes: cleanNotes,
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error("[ROUTINES] Error en POST /routines/:id/items:", e);
+    res.status(500).json({ message: "Error añadiendo ejercicio a rutina" });
+  } finally {
+    conn.release();
+  }
+});
+
+// DELETE /routines/:id/items/:itemId -> quitar item
+app.delete("/routines/:id/items/:itemId", async (req, res) => {
+  const routineId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+  if (!routineId || !itemId) {
+    return res.status(400).json({ message: "ID inválido" });
+  }
+
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `
+      DELETE FROM routine_items
+      WHERE id = ? AND routine_id = ?
+      `,
+      [itemId, routineId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Item no encontrado" });
+    }
+
+    res.json({ message: "Ejercicio eliminado de la rutina" });
+  } catch (e) {
+    console.error("[ROUTINES] Error en DELETE /routines/:id/items/:itemId:", e);
+    res.status(500).json({ message: "Error eliminando item" });
+  }
+});
+
 // ===============================
 app.listen(PORT, () => {
   console.log(`Core API escuchando en http://localhost:${PORT}`);

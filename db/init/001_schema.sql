@@ -49,3 +49,37 @@ CREATE TABLE IF NOT EXISTS exercise_muscles (
     FOREIGN KEY (muscle_id) REFERENCES muscles(id)
     ON DELETE CASCADE
 );
+-- ===============================
+-- ROUTINES
+-- ===============================
+CREATE TABLE IF NOT EXISTS routines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(255) NOT NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (id)
+);
+
+-- ===============================
+-- ROUTINE ITEMS (ejercicios dentro de una rutina)
+-- ===============================
+CREATE TABLE IF NOT EXISTS routine_items (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  routine_id BIGINT UNSIGNED NOT NULL,
+  exercise_id BIGINT UNSIGNED NOT NULL,
+  position INT NOT NULL DEFAULT 1,
+  sets INT NULL,
+  reps VARCHAR(50) NULL,
+  weight_kg DECIMAL(6,2) NULL,
+  notes VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  KEY ix_ri_routine (routine_id),
+  KEY ix_ri_exercise (exercise_id),
+  CONSTRAINT fk_ri_routine
+    FOREIGN KEY (routine_id) REFERENCES routines(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_ri_exercise
+    FOREIGN KEY (exercise_id) REFERENCES exercises(id)
+    ON DELETE CASCADE
+);
