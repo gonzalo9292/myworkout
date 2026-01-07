@@ -1,4 +1,7 @@
 services:
+  # ===============================
+  # MySQL (Core DB)
+  # ===============================
   mysql:
     image: mysql:8.0
     container_name: myworkout-mysql
@@ -16,6 +19,9 @@ services:
       timeout: 5s
       retries: 20
 
+  # ===============================
+  # Core API (Node / Express)
+  # ===============================
   core-api:
     build:
       context: ./core-api-node
@@ -33,6 +39,21 @@ services:
       mysql:
         condition: service_healthy
 
+  # ===============================
+  # Analytics API (FastAPI - Python)
+  # ===============================
+  analytics-api:
+    build:
+      context: ./analytics-api-fastapi
+    container_name: myworkout-analytics-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - core-api
+
+  # ===============================
+  # Frontend (Angular)
+  # ===============================
   frontend:
     build:
       context: ./frontend-angular/frontend-angular
@@ -41,6 +62,7 @@ services:
       - "4200:4200"
     depends_on:
       - core-api
+      - analytics-api
 
 volumes:
   mysql_data:

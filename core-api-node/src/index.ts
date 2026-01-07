@@ -1448,6 +1448,64 @@ app.delete("/workouts/:id", async (req, res) => {
   }
 });
 
+// ===============================
+// ANALYTICS (solo lectura)
+// ===============================
+// GET /analytics/workouts?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Devuelve filas "planas" de workouts + items + sets para agregación en el microservicio
+app.get("/analytics/workouts", async (req, res) => {
+  const from = String(req.query.from ?? "").trim();
+  const to = String(req.query.to ?? "").trim();
+
+  // validación básica
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({
+      message: "from y to son obligatorios con formato YYYY-MM-DD",
+      example: "/analytics/workouts?from=2026-01-01&to=2026-01-31",
+    });
+  }
+
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+      SELECT
+        w.id           AS workout_id,
+        w.workout_date AS workout_date,
+        wi.id          AS workout_item_id,
+        wi.exercise_id AS exercise_id,
+        e.name         AS exercise_name,
+        ws.id          AS set_id,
+        ws.set_index   AS set_index,
+        ws.reps        AS reps,
+        ws.weight_kg   AS weight_kg
+      FROM workouts w
+      JOIN workout_items wi ON wi.workout_id = w.id
+      JOIN exercises e ON e.id = wi.exercise_id
+      LEFT JOIN workout_sets ws ON ws.workout_item_id = wi.id
+      WHERE w.workout_date BETWEEN ? AND ?
+      ORDER BY
+        w.workout_date ASC,
+        wi.position ASC,
+        ws.set_index ASC,
+        ws.id ASC
+      `,
+      [from, to]
+    );
+
+    return res.json({
+      from,
+      to,
+      count: rows.length,
+      rows,
+    });
+  } catch (e) {
+    console.error("[ANALYTICS] Error en GET /analytics/workouts:", e);
+    return res.status(500).json({
+      message: "Error obteniendo datos de analytics",
+      error: String(e),
+    });
+  }
+});
 
 // ===============================
 app.listen(PORT, () => {
