@@ -1,9 +1,10 @@
-// src/app/pages/analytics/analytics-page.ts
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { HttpClient, HttpParams } from '@angular/common/http';
 import { RouterModule } from '@angular/router';
+import { HttpClient, HttpParams } from '@angular/common/http';
+
+type AnalyticsByDay = { date: string; volume: number };
+type AnalyticsByExercise = { exercise: string; volume: number };
 
 type AnalyticsSummaryResponse = {
   from: string;
@@ -13,185 +14,264 @@ type AnalyticsSummaryResponse = {
     exercises: number;
     sets: number;
     total_reps: number;
-    total_volume: number; // ya viene redondeado en backend
+    total_volume: number;
   };
-  by_day: Array<{ date: string; volume: number }>;
-  by_exercise: Array<{ exercise: string; volume: number }>;
+  by_day: AnalyticsByDay[];
+  by_exercise: AnalyticsByExercise[];
 };
 
-type RebuildLatestResponse = {
+type AnalyticsRebuildLatestResponse = {
   range: { from: string; to: string; days: number };
   result: AnalyticsSummaryResponse;
 };
 
 @Component({
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule],
+  imports: [CommonModule, RouterModule],
   template: `
     <section class="page">
-      <header class="page-header">
-        <h1>Analíticas</h1>
-        <p class="muted">
-          Resúmenes por rango y ranking de ejercicios por volumen.
-        </p>
-      </header>
-
-      <!-- Acciones -->
-      <section class="panel">
-        <div class="panel-head">
-          <h2 class="panel-title">Resumen por rango</h2>
-
-          <button class="btn" (click)="loadSummary()" [disabled]="loading()">
-            {{ loading() ? 'Cargando…' : 'Cargar resumen' }}
-          </button>
+      <header class="header">
+        <div>
+          <h1>Analíticas</h1>
+          <p class="muted">
+            Volumen (reps × kg), evolución por día y top ejercicios.
+          </p>
         </div>
 
-        <div class="row">
+        <div class="actions">
+          <button class="btn ghost" (click)="quick7()">7 días</button>
+          <button class="btn ghost" (click)="quick30()">30 días</button>
+          <button class="btn ghost" (click)="quick90()">90 días</button>
+        </div>
+      </header>
+
+      <!-- Controles -->
+      <section class="card controls">
+        <div class="controls-left">
           <label class="field">
             <span class="label">Desde</span>
-            <input class="inp" type="date" [(ngModel)]="fromDate" />
+            <input
+              class="inp"
+              type="date"
+              [value]="fromDate()"
+              (input)="fromDate.set(($any($event.target).value || '').trim())"
+            />
           </label>
 
           <label class="field">
             <span class="label">Hasta</span>
-            <input class="inp" type="date" [(ngModel)]="toDate" />
-          </label>
-
-          <div class="help muted">
-            Consejo: usa rangos completos (por ejemplo un mes) para ver volumen
-            y ranking.
-          </div>
-        </div>
-
-        <section *ngIf="error()" class="state error">
-          {{ error() }}
-        </section>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2 class="panel-title">Últimos N días</h2>
-
-          <button
-            class="btn ghost"
-            (click)="rebuildLatest()"
-            [disabled]="loading()"
-          >
-            {{ loading() ? 'Cargando…' : 'Rebuild latest' }}
-          </button>
-        </div>
-
-        <div class="row latest">
-          <label class="field">
-            <span class="label">Días</span>
             <input
               class="inp"
-              type="number"
-              min="1"
-              step="1"
-              [(ngModel)]="days"
+              type="date"
+              [value]="toDate()"
+              (input)="toDate.set(($any($event.target).value || '').trim())"
             />
           </label>
 
-          <div class="help muted">
-            Esto llama a <code>/analytics/rebuild/latest</code> y devuelve el
-            resumen del rango calculado (from/to).
+          <button class="btn" (click)="loadSummary()" [disabled]="loading()">
+            {{ loading() ? 'Cargando…' : 'Cargar' }}
+          </button>
+        </div>
+
+        <div class="controls-right">
+          <div class="mini">
+            <div class="mini-title">Últimos N días</div>
+            <div class="mini-row">
+              <input
+                class="inp small"
+                type="number"
+                min="1"
+                max="3650"
+                [value]="days()"
+                (input)="days.set(toInt($any($event.target).value || '90'))"
+              />
+              <button
+                class="btn ghost"
+                (click)="rebuildLatest()"
+                [disabled]="rebuilding()"
+              >
+                {{ rebuilding() ? 'Rebuild…' : 'Rebuild' }}
+              </button>
+            </div>
+            <div class="muted tiny">
+              Rebuild recalcula el rango automáticamente.
+            </div>
           </div>
+        </div>
+
+        <div *ngIf="error()" class="alert error">{{ error() }}</div>
+        <div *ngIf="rebuildError()" class="alert error">
+          {{ rebuildError() }}
+        </div>
+      </section>
+
+      <!-- Estado vacío -->
+      <section *ngIf="!result() && !loading()" class="card empty">
+        <div class="empty-title">Sin datos cargados</div>
+        <div class="muted">
+          Pulsa <strong>Cargar</strong> o usa <strong>Rebuild</strong> para ver
+          las gráficas.
         </div>
       </section>
 
       <!-- Resultados -->
-      <section *ngIf="data()" class="content">
-        <section class="panel">
-          <h2 class="panel-title">Resumen</h2>
-
-          <div class="kpis" *ngIf="data() as d">
-            <div class="kpi">
-              <div class="kpi-label">Rango</div>
-              <div class="kpi-val">{{ formatRange(d.from, d.to) }}</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Entrenamientos</div>
-              <div class="kpi-val">{{ d.summary.workouts }}</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Ejercicios</div>
-              <div class="kpi-val">{{ d.summary.exercises }}</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Series</div>
-              <div class="kpi-val">{{ d.summary.sets }}</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Reps totales</div>
-              <div class="kpi-val">{{ d.summary.total_reps }}</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Volumen total</div>
-              <div class="kpi-val">
-                {{ formatNumber(d.summary.total_volume) }}
-              </div>
+      <section *ngIf="result() as r" class="layout">
+        <!-- KPIs -->
+        <section class="kpis">
+          <div class="kpi">
+            <div class="kpi-label">Rango</div>
+            <div class="kpi-val">
+              {{ formatDate(r.from) }} → {{ formatDate(r.to) }}
             </div>
           </div>
-
-          <p class="muted small" *ngIf="data() as d">
-            Volumen = reps × kg. (Si kg es nulo, se toma como 0.)
-          </p>
+          <div class="kpi">
+            <div class="kpi-label">Entrenamientos</div>
+            <div class="kpi-num">{{ r.summary.workouts }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Series</div>
+            <div class="kpi-num">{{ r.summary.sets }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Reps</div>
+            <div class="kpi-num">{{ r.summary.total_reps }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Volumen total</div>
+            <div class="kpi-num">{{ formatNum(r.summary.total_volume) }}</div>
+          </div>
         </section>
 
-        <section class="panel">
-          <h2 class="panel-title">Volumen por día</h2>
+        <!-- Charts -->
+        <section class="charts">
+          <!-- Line chart: volumen por día -->
+          <section class="card chart">
+            <div class="card-title-row">
+              <div>
+                <div class="title">Volumen por día</div>
+                <div class="muted tiny" *ngIf="r.by_day.length">
+                  {{ r.by_day.length }} día{{
+                    r.by_day.length === 1 ? '' : 's'
+                  }}
+                </div>
+              </div>
+              <div class="muted tiny" *ngIf="r.by_day.length">
+                Máx: {{ formatNum(maxDayVolume()) }}
+              </div>
+            </div>
 
-          <div *ngIf="(data()?.by_day?.length ?? 0) === 0" class="empty muted">
-            No hay datos en ese rango.
-          </div>
+            <div *ngIf="r.by_day.length === 0" class="muted">
+              No hay datos en este rango.
+            </div>
 
-          <table class="tbl" *ngIf="(data()?.by_day?.length ?? 0) > 0">
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th class="right">Volumen</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let r of data()!.by_day">
-                <td>{{ formatDate(r.date) }}</td>
-                <td class="right">{{ formatNumber(r.volume) }}</td>
-              </tr>
-            </tbody>
-          </table>
+            <div *ngIf="r.by_day.length > 0" class="svg-wrap">
+              <svg [attr.viewBox]="'0 0 ' + chartW + ' ' + chartH" class="svg">
+                <!-- grid -->
+                <g class="grid">
+                  <line
+                    *ngFor="let y of gridYs"
+                    [attr.x1]="pad"
+                    [attr.y1]="y"
+                    [attr.x2]="chartW - pad"
+                    [attr.y2]="y"
+                  />
+                </g>
+
+                <!-- area -->
+                <path class="area" [attr.d]="areaPath()" />
+
+                <!-- line -->
+                <path class="line" [attr.d]="linePath()" />
+
+                <!-- points -->
+                <g>
+                  <circle
+                    *ngFor="let p of dayPoints()"
+                    class="pt"
+                    [attr.cx]="p.x"
+                    [attr.cy]="p.y"
+                    r="4"
+                  >
+                    <title>{{ p.label }}</title>
+                  </circle>
+                </g>
+
+                <!-- x labels (primero y último) -->
+                <g class="labels">
+                  <text
+                    [attr.x]="pad"
+                    [attr.y]="chartH - 8"
+                    text-anchor="start"
+                  >
+                    {{ formatShort(r.by_day[0].date) }}
+                  </text>
+                  <text
+                    [attr.x]="chartW - pad"
+                    [attr.y]="chartH - 8"
+                    text-anchor="end"
+                  >
+                    {{ formatShort(r.by_day[r.by_day.length - 1].date) }}
+                  </text>
+                </g>
+              </svg>
+            </div>
+          </section>
+
+          <!-- Bar chart: top ejercicios -->
+          <section class="card chart">
+            <div class="card-title-row">
+              <div>
+                <div class="title">Top ejercicios (volumen)</div>
+                <div class="muted tiny" *ngIf="topExercises().length">
+                  Top {{ topExercises().length }}
+                </div>
+              </div>
+              <div class="muted tiny" *ngIf="topExercises().length">
+                Máx: {{ formatNum(maxExerciseVolume()) }}
+              </div>
+            </div>
+
+            <div *ngIf="topExercises().length === 0" class="muted">
+              No hay ranking en este rango.
+            </div>
+
+            <div *ngIf="topExercises().length > 0" class="bars">
+              <div
+                class="barrow"
+                *ngFor="let ex of topExercises(); let i = index"
+              >
+                <div class="barname">
+                  <span class="badge">{{ i + 1 }}</span>
+                  <span class="name" [title]="ex.exercise">{{
+                    ex.exercise
+                  }}</span>
+                </div>
+
+                <div class="bartrack" [title]="formatNum(ex.volume)">
+                  <div
+                    class="barfill"
+                    [style.width.%]="pct(ex.volume, maxExerciseVolume())"
+                  ></div>
+                </div>
+
+                <div class="barval">{{ formatNum(ex.volume) }}</div>
+              </div>
+            </div>
+          </section>
         </section>
 
-        <section class="panel">
-          <h2 class="panel-title">Ranking por ejercicio</h2>
+        <!-- Tabla simple -->
+        <section class="card table" *ngIf="r.by_day.length > 0">
+          <div class="title">Detalle por día</div>
 
-          <div
-            *ngIf="(data()?.by_exercise?.length ?? 0) === 0"
-            class="empty muted"
-          >
-            No hay datos en ese rango.
+          <div class="t-head">
+            <div>Fecha</div>
+            <div class="right">Volumen</div>
           </div>
 
-          <div class="rank" *ngIf="(data()?.by_exercise?.length ?? 0) > 0">
-            <article
-              class="rank-item"
-              *ngFor="let r of data()!.by_exercise; let i = index"
-            >
-              <div class="rank-left">
-                <div class="badge">{{ i + 1 }}</div>
-                <div class="ex-name">{{ r.exercise }}</div>
-              </div>
-
-              <div class="rank-right">
-                <div class="vol">{{ formatNumber(r.volume) }}</div>
-                <div class="muted small">volumen</div>
-              </div>
-            </article>
+          <div class="t-row" *ngFor="let d of r.by_day">
+            <div>{{ formatDate(d.date) }}</div>
+            <div class="right">{{ formatNum(d.volume) }}</div>
           </div>
         </section>
       </section>
@@ -202,52 +282,67 @@ type RebuildLatestResponse = {
       .page {
         max-width: 1100px;
         margin: 0 auto;
-        padding: 24px 16px;
+        padding: 24px 16px 36px;
       }
 
-      .page-header h1 {
+      .header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      h1 {
         margin: 0 0 6px;
         font-size: 34px;
+        letter-spacing: -0.02em;
       }
+
       .muted {
         opacity: 0.7;
       }
-      .small {
-        font-size: 12.5px;
+      .tiny {
+        font-size: 12px;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
-      .panel {
-        margin-top: 16px;
+      .card {
         border: 1px solid #eee;
         background: #fff;
-        border-radius: 16px;
+        border-radius: 18px;
         padding: 14px;
       }
 
-      .panel-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 10px;
-      }
-
-      .panel-title {
-        margin: 0;
-        font-size: 15px;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        opacity: 0.75;
-      }
-
-      .row {
+      .controls {
         display: grid;
-        grid-template-columns: 240px 240px 1fr;
+        grid-template-columns: 1fr 340px;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .controls-left {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
         gap: 10px;
         align-items: end;
       }
-      .row.latest {
-        grid-template-columns: 240px 1fr;
+
+      .controls-right .mini-title {
+        font-weight: 950;
+        margin-bottom: 6px;
+      }
+      .mini-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .small {
+        width: 120px;
       }
 
       .field {
@@ -256,6 +351,7 @@ type RebuildLatestResponse = {
         gap: 6px;
         min-width: 0;
       }
+
       .label {
         font-size: 12px;
         font-weight: 900;
@@ -267,22 +363,9 @@ type RebuildLatestResponse = {
       .inp {
         padding: 10px 12px;
         border: 1px solid #e6e6e6;
-        border-radius: 10px;
+        border-radius: 12px;
         outline: none;
-        min-width: 0;
         background: #fff;
-      }
-
-      .help {
-        font-size: 13px;
-        line-height: 1.35;
-      }
-      code {
-        background: #f4f4f4;
-        border: 1px solid #eee;
-        padding: 2px 6px;
-        border-radius: 8px;
-        font-size: 12px;
       }
 
       .btn {
@@ -293,10 +376,6 @@ type RebuildLatestResponse = {
         cursor: pointer;
         background: #111;
         color: #fff;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
         white-space: nowrap;
       }
       .btn.ghost {
@@ -308,35 +387,46 @@ type RebuildLatestResponse = {
         cursor: not-allowed;
       }
 
-      .state {
+      .alert {
+        grid-column: 1 / -1;
         margin-top: 10px;
-        padding: 14px;
-        border-radius: 12px;
-        background: #fafafa;
+        padding: 12px;
+        border-radius: 14px;
         border: 1px solid #eee;
+        background: #fafafa;
       }
-      .state.error {
+      .alert.error {
         background: #fff5f5;
         border-color: #ffd6d6;
       }
 
-      .content {
-        margin-top: 10px;
+      .empty {
+        margin-top: 14px;
+        text-align: center;
+        padding: 22px;
+      }
+      .empty-title {
+        font-weight: 950;
+        margin-bottom: 6px;
+      }
+
+      .layout {
+        margin-top: 14px;
         display: flex;
         flex-direction: column;
-        gap: 0;
+        gap: 14px;
       }
 
       .kpis {
         display: grid;
-        grid-template-columns: 1.4fr repeat(5, 1fr);
+        grid-template-columns: 1.4fr repeat(4, 1fr);
         gap: 10px;
       }
       .kpi {
         border: 1px solid #eee;
-        border-radius: 14px;
+        background: #fff;
+        border-radius: 16px;
         padding: 12px;
-        background: #fafafa;
       }
       .kpi-label {
         font-size: 12px;
@@ -344,95 +434,166 @@ type RebuildLatestResponse = {
         opacity: 0.7;
         text-transform: uppercase;
         letter-spacing: 0.02em;
-        margin-bottom: 6px;
+      }
+      .kpi-num {
+        margin-top: 8px;
+        font-size: 24px;
+        font-weight: 950;
       }
       .kpi-val {
-        font-weight: 950;
-        font-size: 18px;
-        line-height: 1.1;
+        margin-top: 8px;
+        font-size: 14px;
+        font-weight: 900;
       }
 
-      .tbl {
+      .charts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      .chart .title {
+        font-weight: 950;
+      }
+      .card-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .svg-wrap {
         width: 100%;
-        border-collapse: collapse;
-        overflow: hidden;
-        border-radius: 14px;
-        border: 1px solid #eee;
       }
-      .tbl th,
-      .tbl td {
-        padding: 10px 12px;
-        border-bottom: 1px solid #eee;
-        font-size: 13px;
-      }
-      .tbl th {
-        background: #fafafa;
-        text-align: left;
-        font-weight: 950;
-      }
-      .tbl tr:last-child td {
-        border-bottom: none;
-      }
-      .right {
-        text-align: right;
+      .svg {
+        width: 100%;
+        height: 220px;
+        display: block;
       }
 
-      .rank {
+      .grid line {
+        stroke: #eee;
+        stroke-width: 1;
+      }
+
+      .area {
+        fill: rgba(0, 0, 0, 0.08);
+      }
+      .line {
+        fill: none;
+        stroke: #111;
+        stroke-width: 3;
+      }
+      .pt {
+        fill: #111;
+      }
+      .labels text {
+        fill: #444;
+        font-size: 12px;
+      }
+
+      .bars {
         display: flex;
         flex-direction: column;
         gap: 10px;
       }
-      .rank-item {
-        border: 1px solid #eee;
-        border-radius: 14px;
-        padding: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .rank-left {
-        display: flex;
-        align-items: center;
+      .barrow {
+        display: grid;
+        grid-template-columns: 1fr 220px 70px;
         gap: 10px;
+        align-items: center;
+      }
+
+      .barname {
+        display: flex;
+        gap: 10px;
+        align-items: center;
         min-width: 0;
       }
       .badge {
-        width: 34px;
-        height: 34px;
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         border-radius: 12px;
         background: #111;
         color: #fff;
         font-weight: 950;
-        display: grid;
-        place-items: center;
+        font-size: 12px;
         flex: 0 0 auto;
       }
-      .ex-name {
+      .name {
         font-weight: 950;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .rank-right {
-        text-align: right;
-        flex: 0 0 auto;
+
+      .bartrack {
+        height: 12px;
+        border-radius: 999px;
+        background: #f4f4f4;
+        border: 1px solid #ededed;
+        overflow: hidden;
       }
-      .vol {
-        font-weight: 950;
-        font-size: 16px;
+      .barfill {
+        height: 100%;
+        background: #111;
+        border-radius: 999px;
+      }
+      .barval {
+        text-align: right;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
       }
 
-      .empty {
-        padding: 8px 0;
+      .table .title {
+        font-weight: 950;
+        margin-bottom: 10px;
+      }
+      .t-head,
+      .t-row {
+        display: grid;
+        grid-template-columns: 1fr 140px;
+        gap: 10px;
+        padding: 10px 0;
+      }
+      .t-head {
+        border-bottom: 1px solid #eee;
+        font-weight: 950;
+      }
+      .t-row {
+        border-bottom: 1px solid #f2f2f2;
+      }
+      .right {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
       }
 
       @media (max-width: 980px) {
-        .row {
+        .header {
+          align-items: start;
+          flex-direction: column;
+        }
+        .controls {
+          grid-template-columns: 1fr;
+        }
+        .controls-left {
+          grid-template-columns: 1fr;
+        }
+        .charts {
           grid-template-columns: 1fr;
         }
         .kpis {
           grid-template-columns: 1fr 1fr;
+        }
+        .barrow {
+          grid-template-columns: 1fr;
+        }
+        .barval {
+          text-align: left;
         }
       }
     `,
@@ -441,135 +602,241 @@ type RebuildLatestResponse = {
 export class AnalyticsPage {
   private http = inject(HttpClient);
 
-  // IMPORTANTE: endpoints relativos (evita hardcodear localhost:8000)
+  // RUTAS RELATIVAS (proxy): /analytics/...
   private readonly baseUrl = '/analytics';
 
   loading = signal(false);
+  rebuilding = signal(false);
+
   error = signal<string | null>(null);
+  rebuildError = signal<string | null>(null);
 
-  data = signal<AnalyticsSummaryResponse | null>(null);
+  fromDate = signal<string>(this.todayMinusDaysYmd(6));
+  toDate = signal<string>(this.todayYmd());
+  days = signal<number>(90);
 
-  fromDate = '';
-  toDate = '';
-  days = 90;
+  result = signal<AnalyticsSummaryResponse | null>(null);
 
-  constructor() {
-    // Por defecto: semana actual (Lunes -> hoy) o algo simple: hoy-6 a hoy
-    const today = new Date();
-    const to = this.toYmd(today);
-    const from = this.toYmd(this.addDays(today, -6));
+  // --- Chart sizing (SVG)
+  chartW = 720;
+  chartH = 240;
+  pad = 22;
+  gridYs = [50, 90, 130, 170, 210];
 
-    this.fromDate = from;
-    this.toDate = to;
-  }
+  // --- computed helpers
+  maxDayVolume = computed(() => {
+    const rows = this.result()?.by_day ?? [];
+    let m = 0;
+    for (const r of rows) m = Math.max(m, Number(r.volume || 0));
+    return m;
+  });
 
+  maxExerciseVolume = computed(() => {
+    const rows = this.result()?.by_exercise ?? [];
+    let m = 0;
+    for (const r of rows) m = Math.max(m, Number(r.volume || 0));
+    return m;
+  });
+
+  topExercises = computed(() => {
+    const rows = this.result()?.by_exercise ?? [];
+    return rows.slice(0, 5);
+  });
+
+  // --- actions
   loadSummary() {
-    const from = (this.fromDate ?? '').trim();
-    const to = (this.toDate ?? '').trim();
+    const from = (this.fromDate() || '').trim();
+    const to = (this.toDate() || '').trim();
 
-    if (!from || !to) {
-      this.error.set('Debes indicar desde/hasta.');
-      return;
-    }
-    if (from > to) {
-      this.error.set('El rango es inválido: "desde" es posterior a "hasta".');
+    this.error.set(null);
+    this.rebuildError.set(null);
+
+    if (!this.isYmd(from) || !this.isYmd(to)) {
+      this.error.set('Las fechas deben estar en formato YYYY-MM-DD.');
       return;
     }
 
     this.loading.set(true);
-    this.error.set(null);
 
     const params = new HttpParams().set('from', from).set('to', to);
 
     this.http
       .get<AnalyticsSummaryResponse>(`${this.baseUrl}/summary`, { params })
       .subscribe({
-        next: (res) => {
-          this.data.set(res ?? null);
+        next: (data) => {
+          this.result.set(data ?? null);
           this.loading.set(false);
         },
         error: (e) => {
           this.loading.set(false);
-          // CORS suele caer aquí con status 0 / Unknown Error
-          if (e?.status === 0) {
-            this.error.set(
-              'No se pudo llamar al Analytics API (probable CORS o proxy no configurado).'
-            );
-          } else {
-            this.error.set(e?.error?.detail ?? 'Error cargando el resumen.');
-          }
+          this.error.set(
+            e?.error?.detail || e?.message || 'Error cargando el resumen.'
+          );
         },
       });
   }
 
   rebuildLatest() {
-    const d = Number(this.days);
+    const d = this.days();
+
+    this.error.set(null);
+    this.rebuildError.set(null);
+
     if (!Number.isFinite(d) || d < 1) {
-      this.error.set('Días inválidos.');
+      this.rebuildError.set('El campo "días" debe ser un número >= 1.');
       return;
     }
 
-    this.loading.set(true);
-    this.error.set(null);
+    this.rebuilding.set(true);
 
     const params = new HttpParams().set('days', String(d));
 
     this.http
-      .post<RebuildLatestResponse>(`${this.baseUrl}/rebuild/latest`, null, {
-        params,
-      })
+      .post<AnalyticsRebuildLatestResponse>(
+        `${this.baseUrl}/rebuild/latest`,
+        null,
+        { params }
+      )
       .subscribe({
-        next: (res) => {
-          const result = res?.result ?? null;
-          this.data.set(result);
-
-          // opcional: sincronizamos los inputs del rango con lo calculado
-          if (result?.from) this.fromDate = result.from;
-          if (result?.to) this.toDate = result.to;
-
-          this.loading.set(false);
+        next: (data) => {
+          this.result.set(data?.result ?? null);
+          if (data?.range?.from) this.fromDate.set(data.range.from);
+          if (data?.range?.to) this.toDate.set(data.range.to);
+          this.rebuilding.set(false);
         },
         error: (e) => {
-          this.loading.set(false);
-          if (e?.status === 0) {
-            this.error.set(
-              'No se pudo llamar al Analytics API (probable CORS o proxy no configurado).'
-            );
-          } else {
-            this.error.set(
-              e?.error?.detail ?? 'Error ejecutando rebuild latest.'
-            );
-          }
+          this.rebuilding.set(false);
+          this.rebuildError.set(
+            e?.error?.detail || e?.message || 'Error ejecutando rebuild.'
+          );
         },
       });
   }
 
-  formatDate(ymd: string): string {
-    if (!ymd) return ymd;
-    const onlyDate = ymd.includes('T') ? ymd.split('T')[0] : ymd;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(onlyDate)) return ymd;
-    const [y, m, d] = onlyDate.split('-');
+  quick7() {
+    this.days.set(7);
+    this.rebuildLatest();
+  }
+  quick30() {
+    this.days.set(30);
+    this.rebuildLatest();
+  }
+  quick90() {
+    this.days.set(90);
+    this.rebuildLatest();
+  }
+
+  // --- line chart builders
+  dayPoints(): Array<{ x: number; y: number; label: string }> {
+    const rows = this.result()?.by_day ?? [];
+    const n = rows.length;
+    const max = this.maxDayVolume();
+
+    const w = this.chartW;
+    const h = this.chartH;
+
+    const left = this.pad;
+    const right = w - this.pad;
+    const top = this.pad;
+    const bottom = h - 26; // deja sitio para labels
+
+    if (n === 0) return [];
+
+    const dx = n === 1 ? 0 : (right - left) / (n - 1);
+
+    return rows.map((r, i) => {
+      const x = left + dx * i;
+      const v = Number(r.volume || 0);
+      const t = max <= 0 ? 0 : v / max;
+      const y = bottom - t * (bottom - top);
+
+      return {
+        x,
+        y,
+        label: `${this.formatDate(r.date)} — ${this.formatNum(v)}`,
+      };
+    });
+  }
+
+  linePath(): string {
+    const pts = this.dayPoints();
+    if (pts.length === 0) return '';
+    if (pts.length === 1)
+      return `M ${pts[0].x} ${pts[0].y} L ${pts[0].x + 0.01} ${pts[0].y}`;
+    return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  }
+
+  areaPath(): string {
+    const pts = this.dayPoints();
+    if (pts.length === 0) return '';
+
+    const w = this.chartW;
+    const h = this.chartH;
+
+    const left = this.pad;
+    const right = w - this.pad;
+    const bottom = h - 26;
+
+    const line = this.linePath();
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+
+    // Cierra el área hasta el "bottom"
+    return `${line} L ${last.x} ${bottom} L ${first.x} ${bottom} Z`;
+  }
+
+  // --- utils
+  toInt(v: string): number {
+    const n = Number(String(v).trim());
+    if (!Number.isFinite(n)) return 90;
+    return Math.max(1, Math.min(3650, Math.trunc(n)));
+  }
+
+  pct(value: number, max: number): number {
+    const v = Number(value || 0);
+    const m = Number(max || 0);
+    if (m <= 0) return 0;
+    return Math.max(0, Math.min(100, (v / m) * 100));
+  }
+
+  formatNum(x: number): string {
+    const n = Number(x ?? 0);
+    if (!Number.isFinite(n)) return '0';
+    const rounded = Math.round(n * 100) / 100;
+    return String(rounded);
+  }
+
+  formatDate(ymdOrIso: string): string {
+    if (!ymdOrIso) return ymdOrIso;
+    const ymd = ymdOrIso.includes('T') ? ymdOrIso.split('T')[0] : ymdOrIso;
+    if (!this.isYmd(ymd)) return ymdOrIso;
+    const [y, m, d] = ymd.split('-');
     return `${d}/${m}/${y}`;
   }
 
-  formatRange(from: string, to: string): string {
-    return `${this.formatDate(from)} → ${this.formatDate(to)}`;
+  formatShort(ymdOrIso: string): string {
+    if (!ymdOrIso) return '';
+    const ymd = ymdOrIso.includes('T') ? ymdOrIso.split('T')[0] : ymdOrIso;
+    if (!this.isYmd(ymd)) return ymdOrIso;
+    const [, m, d] = ymd.split('-');
+    return `${d}/${m}`;
   }
 
-  formatNumber(n: number): string {
-    const num = Number(n ?? 0);
-    return new Intl.NumberFormat('es-ES', {
-      maximumFractionDigits: 2,
-    }).format(num);
+  isYmd(s: string): boolean {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
   }
 
-  private addDays(d: Date, days: number): Date {
-    const x = new Date(d);
-    x.setDate(x.getDate() + days);
-    return x;
+  todayYmd(): string {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
   }
 
-  private toYmd(d: Date): string {
+  todayMinusDaysYmd(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - (Number(days) || 0));
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
