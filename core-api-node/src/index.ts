@@ -1508,6 +1508,6 @@ app.get("/analytics/workouts", async (req, res) => {
 });
 
 // ===============================
-app.listen(PORT, () => {
-  console.log(`Core API escuchando en http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Core API escuchando en http://0.0.0.0:${PORT}`);
 });

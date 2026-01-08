@@ -23,23 +23,22 @@ export type AnalyticsRebuildResponse = {
 
 @Injectable({ providedIn: 'root' })
 export class AnalyticsApi {
-  // OJO: esto va al microservicio analytics
-  private readonly baseUrl = 'http://localhost:8000';
+  // Gateway/proxy: /analytics/*
+  private readonly baseUrl = '/analytics';
 
   constructor(private http: HttpClient) {}
 
   summary(from: string, to: string): Observable<AnalyticsSummaryResponse> {
     const params = new HttpParams().set('from', from).set('to', to);
-    return this.http.get<AnalyticsSummaryResponse>(
-      `${this.baseUrl}/analytics/summary`,
-      { params }
-    );
+    return this.http.get<AnalyticsSummaryResponse>(`${this.baseUrl}/summary`, {
+      params,
+    });
   }
 
   rebuildLatest(days: number): Observable<AnalyticsRebuildResponse> {
     const params = new HttpParams().set('days', String(days));
     return this.http.post<AnalyticsRebuildResponse>(
-      `${this.baseUrl}/analytics/rebuild/latest`,
+      `${this.baseUrl}/rebuild/latest`,
       null,
       { params }
     );

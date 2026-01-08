@@ -1,7 +1,4 @@
 services:
-  # ===============================
-  # MySQL (Core DB)
-  # ===============================
   mysql:
     image: mysql:8.0
     container_name: myworkout-mysql
@@ -19,9 +16,6 @@ services:
       timeout: 5s
       retries: 20
 
-  # ===============================
-  # Core API (Node / Express)
-  # ===============================
   core-api:
     build:
       context: ./core-api-node
@@ -33,27 +27,40 @@ services:
       MYSQL_PASSWORD: root
       MYSQL_DATABASE: myworkout
       PORT: 3000
-    ports:
-      - "3000:3000"
+    # opcional: en “arquitectura gateway”, no hace falta exponerlo al host
+    # ports:
+    #   - "3000:3000"
     depends_on:
       mysql:
         condition: service_healthy
 
-  # ===============================
-  # Analytics API (FastAPI - Python)
-  # ===============================
   analytics-api:
     build:
-      context: ./analytics-api-fastapi
+      context: ./analytics-api-fastapi # <-- CORREGIDO (antes: ./analytics-api)
     container_name: myworkout-analytics-api
-    ports:
-      - "8000:8000"
+    environment:
+      # si lo usas en main.py, no hace daño dejarlo
+      CORE_API_BASE: http://core-api:3000
+    # opcional: tampoco hace falta exponerlo al host
+    # ports:
+    #   - "8000:8000"
     depends_on:
       - core-api
 
-  # ===============================
-  # Frontend (Angular)
-  # ===============================
+  gateway:
+    build:
+      context: ./gateway
+    container_name: myworkout-gateway
+    environment:
+      PORT: 8080
+      CORE_API_TARGET: http://core-api:3000
+      ANALYTICS_API_TARGET: http://analytics-api:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - core-api
+      - analytics-api
+
   frontend:
     build:
       context: ./frontend-angular/frontend-angular
@@ -61,8 +68,7 @@ services:
     ports:
       - "4200:4200"
     depends_on:
-      - core-api
-      - analytics-api
+      - gateway
 
 volumes:
   mysql_data:
