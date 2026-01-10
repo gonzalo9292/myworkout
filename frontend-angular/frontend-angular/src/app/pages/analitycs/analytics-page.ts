@@ -3,6 +3,9 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { HttpClient, HttpParams } from '@angular/common/http';
 
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+
 type AnalyticsByDay = { date: string; volume: number };
 type AnalyticsByExercise = { exercise: string; volume: number };
 
@@ -42,6 +45,15 @@ type AnalyticsRebuildLatestResponse = {
           <button class="btn ghost" (click)="quick7()">7 días</button>
           <button class="btn ghost" (click)="quick30()">30 días</button>
           <button class="btn ghost" (click)="quick90()">90 días</button>
+
+          <button
+            class="btn"
+            (click)="generatePdfFromView()"
+            [disabled]="!result() || generatingPdf()"
+            title="Descarga un PDF con la analítica visible en este momento"
+          >
+            {{ generatingPdf() ? 'Generando…' : 'Generar informe' }}
+          </button>
         </div>
       </header>
 
@@ -103,6 +115,9 @@ type AnalyticsRebuildLatestResponse = {
         <div *ngIf="rebuildError()" class="alert error">
           {{ rebuildError() }}
         </div>
+        <div *ngIf="pdfError()" class="alert error">
+          {{ pdfError() }}
+        </div>
       </section>
 
       <!-- Estado vacío -->
@@ -114,8 +129,8 @@ type AnalyticsRebuildLatestResponse = {
         </div>
       </section>
 
-      <!-- Resultados -->
-      <section *ngIf="result() as r" class="layout">
+      <!-- Resultados (esto es lo que exportamos a PDF) -->
+      <section *ngIf="result() as r" class="layout" id="report-root">
         <!-- KPIs -->
         <section class="kpis">
           <div class="kpi">
@@ -611,6 +626,10 @@ export class AnalyticsPage {
   error = signal<string | null>(null);
   rebuildError = signal<string | null>(null);
 
+  // PDF state
+  generatingPdf = signal(false);
+  pdfError = signal<string | null>(null);
+
   fromDate = signal<string>(this.todayMinusDaysYmd(6));
   toDate = signal<string>(this.todayYmd());
   days = signal<number>(90);
@@ -650,6 +669,7 @@ export class AnalyticsPage {
 
     this.error.set(null);
     this.rebuildError.set(null);
+    this.pdfError.set(null);
 
     if (!this.isYmd(from) || !this.isYmd(to)) {
       this.error.set('Las fechas deben estar en formato YYYY-MM-DD.');
@@ -681,6 +701,7 @@ export class AnalyticsPage {
 
     this.error.set(null);
     this.rebuildError.set(null);
+    this.pdfError.set(null);
 
     if (!Number.isFinite(d) || d < 1) {
       this.rebuildError.set('El campo "días" debe ser un número >= 1.');
@@ -726,6 +747,77 @@ export class AnalyticsPage {
     this.rebuildLatest();
   }
 
+  // --- PDF: captura visual del informe actual (sin backend)
+  async generatePdfFromView() {
+    const r = this.result();
+    if (!r) return;
+
+    this.pdfError.set(null);
+    this.generatingPdf.set(true);
+
+    try {
+      const el = document.getElementById('report-root');
+      if (!el) {
+        this.pdfError.set('No se ha encontrado el contenedor del informe.');
+        return;
+      }
+
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: document.documentElement.clientWidth,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const margin = 10;
+      const usableWidth = pageWidth - margin * 2;
+      const usableHeight = pageHeight - margin * 2;
+
+      const imgProps = pdf.getImageProperties(imgData);
+      const imgWidth = usableWidth;
+      const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+
+      if (imgHeight <= usableHeight) {
+        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
+      } else {
+        let remainingHeight = imgHeight;
+
+        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
+        remainingHeight -= usableHeight;
+
+        while (remainingHeight > 0) {
+          pdf.addPage();
+          const offsetY = margin - (imgHeight - remainingHeight);
+          pdf.addImage(imgData, 'PNG', margin, offsetY, imgWidth, imgHeight);
+          remainingHeight -= usableHeight;
+        }
+      }
+
+      // Nombre en español, claro y sin timestamp (la opción más “presentable”)
+      const from = (this.fromDate() || r.from || '').trim();
+      const to = (this.toDate() || r.to || '').trim();
+
+      const fromTxt = this.formatYmdToDmyForFile(from);
+      const toTxt = this.formatYmdToDmyForFile(to);
+
+      // Recomendación: "Progreso" suena mejor como informe para un profe/entrega
+      const filename = `Progreso_del_${fromTxt}_al_${toTxt}.pdf`;
+
+      pdf.save(filename);
+    } catch (e: any) {
+      this.pdfError.set(e?.message || 'Error generando el PDF.');
+    } finally {
+      this.generatingPdf.set(false);
+    }
+  }
+
   // --- line chart builders
   dayPoints(): Array<{ x: number; y: number; label: string }> {
     const rows = this.result()?.by_day ?? [];
@@ -738,7 +830,7 @@ export class AnalyticsPage {
     const left = this.pad;
     const right = w - this.pad;
     const top = this.pad;
-    const bottom = h - 26; // deja sitio para labels
+    const bottom = h - 26;
 
     if (n === 0) return [];
 
@@ -770,18 +862,12 @@ export class AnalyticsPage {
     const pts = this.dayPoints();
     if (pts.length === 0) return '';
 
-    const w = this.chartW;
-    const h = this.chartH;
-
-    const left = this.pad;
-    const right = w - this.pad;
-    const bottom = h - 26;
+    const bottom = this.chartH - 26;
 
     const line = this.linePath();
     const first = pts[0];
     const last = pts[pts.length - 1];
 
-    // Cierra el área hasta el "bottom"
     return `${line} L ${last.x} ${bottom} L ${first.x} ${bottom} Z`;
   }
 
@@ -841,5 +927,12 @@ export class AnalyticsPage {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // NUEVO: formateo YYYY-MM-DD -> DD-MM-YYYY para el nombre del archivo
+  private formatYmdToDmyForFile(ymd: string): string {
+    if (!this.isYmd(ymd)) return ymd;
+    const [y, m, d] = ymd.split('-');
+    return `${d}-${m}-${y}`;
   }
 }
