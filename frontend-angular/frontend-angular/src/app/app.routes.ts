@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
 import { ExercisesPage } from './pages/exercises/exercises-page';
 import { AnalyticsPage } from './pages/analitycs/analytics-page';
-import { LoginPage } from './pages/auth/login-page';
+import { HistorialPage } from './pages/historial/historial-page';
 import { ExerciseDetailPage } from './pages/exercises/exercise-detail-page';
 import { RoutinesPage } from './pages/routines/routines-page';
 import { RoutineDetailPage } from './pages/routines/routine-detail-page';
@@ -17,6 +17,6 @@ export const routes: Routes = [
   { path: 'workouts', component: WorkoutsPage },
   { path: 'workouts/:id', component: WorkoutDetailPage },
   { path: 'progress', component: AnalyticsPage },
-  { path: 'login', component: LoginPage },
+  { path: 'historial', component: HistorialPage },
   { path: '**', redirectTo: 'exercises' },
 ];

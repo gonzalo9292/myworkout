@@ -6,15 +6,19 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 import os
 
+from reports_router import router as reports_router
+
 # =========================================================
 # App
 # =========================================================
 app = FastAPI(title="MyWorkout Analytics API")
 
+# IMPORTANTE: registra el endpoint POST /analytics/reports
+app.include_router(reports_router)
+
 # =========================================================
 # CORS (para llamadas desde Angular en http://localhost:4200)
 # =========================================================
-# Puedes ajustar allow_origins si despliegas en otro host.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -29,10 +33,7 @@ app.add_middleware(
 # =========================================================
 # Config
 # =========================================================
-# En docker-compose, core-api se resuelve por nombre de servicio.
-# Si lo quieres parametrizable, exporta CORE_API_BASE en el compose.
 CORE_API_BASE = os.getenv("CORE_API_BASE", "http://core-api:3000")
-
 
 # =========================================================
 # Health
@@ -41,13 +42,11 @@ CORE_API_BASE = os.getenv("CORE_API_BASE", "http://core-api:3000")
 def health():
     return {"status": "ok"}
 
-
 # =========================================================
 # Helpers
 # =========================================================
 def _validate_iso_date(s: str, field: str) -> str:
     try:
-        # Acepta YYYY-MM-DD
         datetime.strptime(s, "%Y-%m-%d")
         return s
     except Exception:
@@ -55,9 +54,7 @@ def _validate_iso_date(s: str, field: str) -> str:
             status_code=400, detail=f"'{field}' debe tener formato YYYY-MM-DD"
         )
 
-
 def _fetch_rows(from_date: str, to_date: str):
-    # 1) Pedir datos al Core API
     try:
         resp = requests.get(
             f"{CORE_API_BASE}/analytics/workouts",
@@ -75,7 +72,6 @@ def _fetch_rows(from_date: str, to_date: str):
 
     payload = resp.json()
     return payload.get("rows", [])
-
 
 def _compute_summary(from_date: str, to_date: str, rows: list):
     if not rows:
@@ -104,7 +100,6 @@ def _compute_summary(from_date: str, to_date: str, rows: list):
     volume_by_exercise = defaultdict(float)
 
     for r in rows:
-        # IDs
         workout_id = r.get("workout_id")
         exercise_id = r.get("exercise_id")
 
@@ -113,13 +108,11 @@ def _compute_summary(from_date: str, to_date: str, rows: list):
         if exercise_id is not None:
             exercises.add(exercise_id)
 
-        # Si viene fila sin set, no suma volumen/series
         if r.get("set_id") is None:
             continue
 
         reps = r.get("reps") or 0
 
-        # weight_kg puede venir como string "2.00" -> float OK
         try:
             weight = float(r.get("weight_kg") or 0)
         except Exception:
@@ -131,7 +124,6 @@ def _compute_summary(from_date: str, to_date: str, rows: list):
         total_reps += reps
         total_volume += volume
 
-        # workout_date viene tipo "2026-01-07T00:00:00.000Z" -> pillamos YYYY-MM-DD
         day = str(r.get("workout_date", ""))[:10]
         if day:
             volume_by_day[day] += volume
@@ -161,7 +153,6 @@ def _compute_summary(from_date: str, to_date: str, rows: list):
         ],
     }
 
-
 # =========================================================
 # Endpoints
 # =========================================================
@@ -181,10 +172,8 @@ def analytics_summary(
     rows = _fetch_rows(from_date, to_date)
     return _compute_summary(from_date, to_date, rows)
 
-
 @app.post("/analytics/rebuild/latest")
 def analytics_rebuild_latest(days: int = Query(90, ge=1, le=3650)):
-    # Rango: hoy - days .. hoy
     to_d = date.today()
     from_d = to_d - timedelta(days=days)
 
@@ -193,8 +182,6 @@ def analytics_rebuild_latest(days: int = Query(90, ge=1, le=3650)):
 
     rows = _fetch_rows(from_date, to_date)
 
-    # De momento “rebuild” = recalcular al vuelo y devolver
-    # (ya persistiremos en Mongo cuando toque)
     return {
         "range": {"from": from_date, "to": to_date, "days": days},
         "result": _compute_summary(from_date, to_date, rows),

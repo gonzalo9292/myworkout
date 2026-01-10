@@ -5,6 +5,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import { firstValueFrom } from 'rxjs';
 
 type AnalyticsByDay = { date: string; volume: number };
 type AnalyticsByExercise = { exercise: string; volume: number };
@@ -662,6 +663,23 @@ export class AnalyticsPage {
     return rows.slice(0, 5);
   });
 
+  // -----------------------------
+  // NUEVO: guardar “evento de informe generado” en Mongo (vía gateway)
+  // POST /analytics/reports  -> gateway -> analytics-api -> Mongo
+  // -----------------------------
+  private saveReportToMongo(filename: string, r: AnalyticsSummaryResponse) {
+    const payload = {
+      from: (this.fromDate() || r.from || '').trim(),
+      to: (this.toDate() || r.to || '').trim(),
+      filename,
+      result: r, // enviamos toda la analítica calculada en ese momento
+      source: 'frontend-angular',
+      trigger: 'user_click',
+    };
+
+    return this.http.post(`${this.baseUrl}/reports`, payload);
+  }
+
   // --- actions
   loadSummary() {
     const from = (this.fromDate() || '').trim();
@@ -755,7 +773,27 @@ export class AnalyticsPage {
     this.pdfError.set(null);
     this.generatingPdf.set(true);
 
+    // Nombre en español, claro y sin timestamp
+    const from = (this.fromDate() || r.from || '').trim();
+    const to = (this.toDate() || r.to || '').trim();
+    const fromTxt = this.formatYmdToDmyForFile(from);
+    const toTxt = this.formatYmdToDmyForFile(to);
+    const filename = `Progreso_del_${fromTxt}_al_${toTxt}.pdf`;
+
     try {
+      // 1) Intentar guardar en Mongo (vía gateway). Si falla, seguimos con el PDF.
+      try {
+        await firstValueFrom(this.saveReportToMongo(filename, r));
+      } catch (e: any) {
+        // No bloqueamos el PDF, pero dejamos aviso en UI
+        this.pdfError.set(
+          e?.error?.detail ||
+            e?.message ||
+            'No se pudo registrar el informe en MongoDB, pero el PDF se generará igualmente.'
+        );
+      }
+
+      // 2) Generar PDF (lo que ya tenías)
       const el = document.getElementById('report-root');
       if (!el) {
         this.pdfError.set('No se ha encontrado el contenedor del informe.');
@@ -770,7 +808,6 @@ export class AnalyticsPage {
       });
 
       const imgData = canvas.toDataURL('image/png');
-
       const pdf = new jsPDF('p', 'mm', 'a4');
 
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -799,16 +836,6 @@ export class AnalyticsPage {
           remainingHeight -= usableHeight;
         }
       }
-
-      // Nombre en español, claro y sin timestamp (la opción más “presentable”)
-      const from = (this.fromDate() || r.from || '').trim();
-      const to = (this.toDate() || r.to || '').trim();
-
-      const fromTxt = this.formatYmdToDmyForFile(from);
-      const toTxt = this.formatYmdToDmyForFile(to);
-
-      // Recomendación: "Progreso" suena mejor como informe para un profe/entrega
-      const filename = `Progreso_del_${fromTxt}_al_${toTxt}.pdf`;
 
       pdf.save(filename);
     } catch (e: any) {

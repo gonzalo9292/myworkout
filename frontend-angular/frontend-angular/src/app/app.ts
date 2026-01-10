@@ -41,10 +41,10 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
           >Progreso</a
         >
         <a
-          routerLink="/login"
+          routerLink="/historial"
           routerLinkActive="active"
           [routerLinkActiveOptions]="{ exact: true }"
-          >Login</a
+          >Historial</a
         >
       </nav>
     </header>
