@@ -6,12 +6,12 @@ import { ExerciseDetailPage } from './pages/exercises/exercise-detail-page/exerc
 import { RoutinesPage } from './pages/routines/routines-page/routines-page';
 import { RoutineDetailPage } from './pages/routines/routine-detail-page/routine-detail-page';
 import { WorkoutsPage } from './pages/workouts/workouts-page/workouts-page';
-import { WorkoutDetailPage } from './pages/workouts/workout-detail-page';
+import { WorkoutDetailPage } from './pages/workouts/workout-detail-page/workout-detail-page';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'exercises' },
   { path: 'exercises', component: ExercisesPage },
-  { path: 'exercises/:id', component: ExerciseDetailPage }, // <-- NUEVO
+  { path: 'exercises/:id', component: ExerciseDetailPage },
   { path: 'routines', component: RoutinesPage },
   { path: 'routines/:id', component: RoutineDetailPage },
   { path: 'workouts', component: WorkoutsPage },

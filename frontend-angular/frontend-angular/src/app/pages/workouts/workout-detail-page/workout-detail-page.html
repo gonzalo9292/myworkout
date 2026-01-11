@@ -1,0 +1,200 @@
+<section class="page">
+  <header class="topbar">
+    <button class="back" (click)="goBack()">← Volver</button>
+
+    <div class="spacer"></div>
+
+    <a class="btn ghost" routerLink="/exercises">Catálogo</a>
+  </header>
+
+  <section *ngIf="loading()" class="state">Cargando entrenamiento…</section>
+  <section *ngIf="error()" class="state error">{{ error() }}</section>
+
+  <section *ngIf="!loading() && !error() && workout() as w" class="content">
+    <header class="header">
+      <div>
+        <h1 class="title">{{ formatDate(w.workout_date) }}</h1>
+        <p class="muted" *ngIf="w.notes">{{ w.notes }}</p>
+        <p class="muted" *ngIf="!w.notes">Sin notas.</p>
+      </div>
+
+      <div class="right">
+        <div class="pill">Ejercicios: {{ w.items?.length ?? 0 }}</div>
+      </div>
+    </header>
+
+    <!-- Añadir ejercicio -->
+    <section class="panel">
+      <h2 class="panel-title">Añadir ejercicio</h2>
+
+      <div class="form">
+        <label class="field">
+          <span class="label">Ejercicio</span>
+          <select class="select" [(ngModel)]="selectedExerciseId">
+            <option [ngValue]="null">Selecciona un ejercicio…</option>
+            <option *ngFor="let ex of exercises()" [ngValue]="ex.id">
+              {{ ex.name }}
+            </option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="label">Notas (opcional)</span>
+          <input
+            class="inp"
+            [(ngModel)]="itemNotes"
+            placeholder="Ej: técnica estricta"
+          />
+        </label>
+
+        <button
+          class="btn"
+          (click)="addItem()"
+          [disabled]="addingItem() || !selectedExerciseId"
+        >
+          {{ addingItem() ? 'Añadiendo…' : 'Añadir' }}
+        </button>
+      </div>
+
+      <p class="hint muted">
+        Añade ejercicios y luego registra series con reps y peso (peso opcional).
+      </p>
+    </section>
+
+    <!-- Lista -->
+    <section class="panel">
+      <h2 class="panel-title">Ejercicios del entrenamiento</h2>
+
+      <div *ngIf="(w.items?.length ?? 0) === 0" class="empty muted">
+        Este entrenamiento está vacío. Añade un ejercicio arriba.
+      </div>
+
+      <div class="items" *ngIf="(w.items?.length ?? 0) > 0">
+        <article class="item" *ngFor="let it of w.items">
+          <!-- Cabecera del ejercicio -->
+          <div class="head">
+            <div class="thumb">
+              <img
+                [src]="it.exercise_image_url || placeholder"
+                [alt]="it.exercise_name"
+                loading="lazy"
+              />
+            </div>
+
+            <div class="head-info">
+              <div class="name">{{ it.exercise_name }}</div>
+
+              <div class="sub muted" *ngIf="it.notes">{{ it.notes }}</div>
+              <div class="sub muted" *ngIf="!it.notes">Sin notas</div>
+
+              <!-- Resumen sets -->
+              <div class="sets-inline" *ngIf="(it.sets?.length ?? 0) > 0">
+                <span class="chip" *ngFor="let s of it.sets">
+                  <span class="chip-title">S{{ s.set_index }}</span>
+
+                  <span class="chip-val">
+                    <strong *ngIf="s.reps != null">{{ s.reps }}</strong>
+                    <span *ngIf="s.reps == null" class="muted">—</span>
+                    reps
+                  </span>
+
+                  <span class="chip-val">
+                    <strong *ngIf="s.weight_kg != null">{{ s.weight_kg }}</strong>
+                    <span *ngIf="s.weight_kg == null" class="muted">—</span>
+                    kg
+                  </span>
+
+                  <button
+                    class="chip-x"
+                    (click)="deleteSet(it.id, s.id)"
+                    [disabled]="deletingSetId() === s.id"
+                    title="Eliminar serie"
+                  >
+                    {{ deletingSetId() === s.id ? '…' : 'X' }}
+                  </button>
+                </span>
+              </div>
+
+              <div class="muted small" *ngIf="(it.sets?.length ?? 0) === 0">
+                Aún no has registrado series.
+              </div>
+            </div>
+
+            <div class="head-actions">
+              <button
+                class="btn ghost"
+                (click)="toggleAddSet(it)"
+                [disabled]="addingSetItemId() === it.id"
+              >
+                {{ isAddSetOpen(it.id) ? 'Cerrar' : 'Añadir serie' }}
+              </button>
+
+              <button
+                class="btn danger"
+                (click)="deleteItem(it.id)"
+                [disabled]="deletingItemId() === it.id"
+              >
+                {{
+                  deletingItemId() === it.id
+                    ? 'Eliminando…'
+                    : 'Eliminar ejercicio'
+                }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Formulario añadir serie (colapsable) -->
+          <div class="addset-wrap" *ngIf="isAddSetOpen(it.id)">
+            <div class="addset-card">
+              <div class="addset-title">Nueva serie</div>
+
+              <div class="addset-form">
+                <label class="mini">
+                  <span class="mini-label">Reps</span>
+                  <input
+                    class="mini-inp"
+                    type="number"
+                    min="0"
+                    step="1"
+                    [(ngModel)]="repsByItem[it.id]"
+                  />
+                </label>
+
+                <label class="mini">
+                  <span class="mini-label">Kg (opcional)</span>
+                  <input
+                    class="mini-inp"
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    [(ngModel)]="weightByItem[it.id]"
+                  />
+                </label>
+
+                <div class="addset-actions">
+                  <button
+                    class="btn"
+                    (click)="addSet(it)"
+                    [disabled]="addingSetItemId() === it.id"
+                  >
+                    {{
+                      addingSetItemId() === it.id ? 'Guardando…' : 'Guardar serie'
+                    }}
+                  </button>
+
+                  <button class="btn ghost" (click)="toggleAddSet(it)">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+
+              <p class="mini-hint muted">
+                Si no hay peso (abdominales, dominadas, etc.), deja Kg vacío.
+              </p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </section>
+</section>

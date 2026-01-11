@@ -128,7 +128,7 @@ def _validate_iso_date(s: str, field: str) -> str:
     except Exception:
         raise HTTPException(status_code=400, detail=f"'{field}' debe tener formato YYYY-MM-DD")
 
-
+#Llama a core api 
 def _fetch_rows(from_date: str, to_date: str) -> List[Dict[str, Any]]:
     """Obtiene filas desde el Core API para el rango [from_date, to_date]."""
     try:
