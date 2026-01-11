@@ -1,8 +1,16 @@
+# reports_router.py
 from fastapi import APIRouter, HTTPException, Query
 from bson import ObjectId
 from datetime import datetime, timezone
 
 from db_mongo import get_db
+from schemas_reports import (
+    ReportCreateRequest,
+    ReportCreateResponse,
+    ReportListResponse,
+    ReportResponse,
+    DeleteResponse,
+)
 
 router = APIRouter(prefix="/analytics", tags=["reports"])
 COLLECTION = "report_generations"
@@ -13,7 +21,6 @@ def _iso_now() -> str:
 
 
 def _oid_time_iso(oid: ObjectId) -> str:
-    # ObjectId lleva timestamp interno
     return oid.generation_time.replace(tzinfo=timezone.utc).isoformat()
 
 
@@ -23,91 +30,15 @@ def _ymd_to_dmy_filename(from_ymd: str, to_ymd: str) -> str:
             y, m, d = s[0:4], s[5:7], s[8:10]
             return f"{d}-{m}-{y}"
         return s or "—"
-
     return f"Progreso_del_{conv(from_ymd)}_al_{conv(to_ymd)}.pdf"
-
-
-def _pick_range(doc: dict) -> dict:
-    """
-    Devuelve {from, to} intentando sacar el rango del documento aunque falten campos.
-    Prioridad:
-    1) doc.range.from/to
-    2) doc.result.from/to
-    3) None
-    """
-    rng = doc.get("range") or {}
-    res = doc.get("result") or {}
-
-    from_ = rng.get("from") or res.get("from")
-    to_ = rng.get("to") or res.get("to")
-
-    out = {}
-    if from_:
-        out["from"] = from_
-    if to_:
-        out["to"] = to_
-    return out
-
-
-def _pick_generated_at(doc: dict, oid: ObjectId) -> str:
-    meta = doc.get("meta") or {}
-    ga = meta.get("generated_at")
-    if ga:
-        return ga
-    return _oid_time_iso(oid)
-
-
-def _pick_pdf(doc: dict, rng: dict) -> dict:
-    """
-    Devuelve pdf {filename, generated}.
-    Si falta filename pero tenemos rango, lo calculamos.
-    """
-    pdf = doc.get("pdf") or {}
-    filename = pdf.get("filename")
-
-    from_ = rng.get("from")
-    to_ = rng.get("to")
-
-    if (not filename) and from_ and to_:
-        filename = _ymd_to_dmy_filename(from_, to_)
-
-    return {
-        "filename": filename,
-        "generated": bool(pdf.get("generated", True)),
-    }
-
-
-def _pick_result(doc: dict) -> dict:
-    """
-    Devuelve result normalizado aunque falten piezas.
-    """
-    res = doc.get("result") or {}
-    summary = res.get("summary") or None
-    by_day = res.get("by_day") or []
-    by_exercise = res.get("by_exercise") or []
-
-    # Normaliza tipos “por si acaso”
-    if not isinstance(by_day, list):
-        by_day = []
-    if not isinstance(by_exercise, list):
-        by_exercise = []
-
-    return {
-        "summary": summary,
-        "by_day": by_day,
-        "by_exercise": by_exercise,
-        # opcional: mantengo from/to si venían
-        "from": res.get("from"),
-        "to": res.get("to"),
-    }
 
 
 def _normalize_doc(doc: dict) -> dict:
     """
-    Normaliza un documento Mongo para frontend:
+    Normaliza un documento Mongo para frontend y para el response_model:
     - id: string
     - generated_at: SIEMPRE
-    - range: lo que se pueda
+    - range: {from,to} si se puede
     - pdf: filename calculado si falta y hay rango
     - result: summary/by_day/by_exercise
     """
@@ -115,84 +46,84 @@ def _normalize_doc(doc: dict) -> dict:
     if not isinstance(oid, ObjectId):
         raise HTTPException(status_code=500, detail="Documento Mongo sin _id válido")
 
-    rng = _pick_range(doc)
-    generated_at = _pick_generated_at(doc, oid)
-    pdf = _pick_pdf(doc, rng)
-    result = _pick_result(doc)
+    rng = doc.get("range") or {}
+    res = doc.get("result") or {}
+    meta = doc.get("meta") or {}
+    pdf = doc.get("pdf") or {}
 
-    # Para evitar que el frontend muestre "—" en rango, intentamos completar
-    # con result.from/to si existen
-    if "from" not in rng and result.get("from"):
-        rng["from"] = result["from"]
-    if "to" not in rng and result.get("to"):
-        rng["to"] = result["to"]
+    from_ = rng.get("from") or res.get("from")
+    to_ = rng.get("to") or res.get("to")
+
+    generated_at = meta.get("generated_at") or _oid_time_iso(oid)
+
+    filename = pdf.get("filename")
+    if (not filename) and from_ and to_:
+        filename = _ymd_to_dmy_filename(from_, to_)
+
+    by_day = res.get("by_day") or []
+    by_exercise = res.get("by_exercise") or []
+    if not isinstance(by_day, list):
+        by_day = []
+    if not isinstance(by_exercise, list):
+        by_exercise = []
 
     return {
         "id": str(oid),
         "generated_at": generated_at,
-        "range": rng,
-        "pdf": pdf,
+        "range": {"from": from_, "to": to_},
+        "pdf": {"filename": filename, "generated": bool(pdf.get("generated", True))},
         "result": {
-            "summary": result.get("summary"),
-            "by_day": result.get("by_day", []),
-            "by_exercise": result.get("by_exercise", []),
+            "from": res.get("from"),
+            "to": res.get("to"),
+            "summary": res.get("summary"),
+            "by_day": by_day,
+            "by_exercise": by_exercise,
         },
     }
 
 
-@router.post("/reports")
-async def create_report(payload: dict):
-    """
-    Inserta un informe en Mongo.
-    Recomendado (desde frontend):
-    {
-      "range": {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"},
-      "result": { "summary":..., "by_day":..., "by_exercise":..., "from":"...", "to":"..." },
-      "pdf": {"filename":"...", "generated": true},
-      "meta": {"generated_at":"...", "source":"frontend-angular", "trigger":"user_click"}
-    }
-    """
+@router.post(
+    "/reports",
+    response_model=ReportCreateResponse,
+    summary="Crear informe en historial",
+    description="Inserta un registro de generación de informe en MongoDB para mantener el historial.",
+)
+async def create_report(payload: ReportCreateRequest) -> ReportCreateResponse:
     db = get_db()
-    payload = dict(payload or {})
+
+    data = payload.model_dump(by_alias=True, exclude_none=True)
 
     # Garantías mínimas
-    payload.setdefault("meta", {})
-    if isinstance(payload["meta"], dict):
-        payload["meta"].setdefault("generated_at", _iso_now())
+    data.setdefault("meta", {})
+    data["meta"].setdefault("generated_at", _iso_now())
 
     # Completa range si no viene, usando result.from/to
-    payload.setdefault("range", {})
-    if isinstance(payload["range"], dict):
-        res = payload.get("result") or {}
-        payload["range"].setdefault(
-            "from", (res.get("from") if isinstance(res, dict) else None)
-        )
-        payload["range"].setdefault(
-            "to", (res.get("to") if isinstance(res, dict) else None)
-        )
+    data.setdefault("range", {})
+    res = data.get("result") or {}
+    data["range"].setdefault("from", res.get("from"))
+    data["range"].setdefault("to", res.get("to"))
 
     # Completa pdf.filename si no viene y hay rango
-    payload.setdefault("pdf", {})
-    if isinstance(payload["pdf"], dict):
-        payload["pdf"].setdefault("generated", True)
-        rng = payload.get("range") or {}
-        if not payload["pdf"].get("filename") and rng.get("from") and rng.get("to"):
-            payload["pdf"]["filename"] = _ymd_to_dmy_filename(rng["from"], rng["to"])
+    data.setdefault("pdf", {})
+    data["pdf"].setdefault("generated", True)
+    rng = data.get("range") or {}
+    if not data["pdf"].get("filename") and rng.get("from") and rng.get("to"):
+        data["pdf"]["filename"] = _ymd_to_dmy_filename(rng["from"], rng["to"])
 
-    res = await db[COLLECTION].insert_one(payload)
-    return {"ok": True, "id": str(res.inserted_id)}
+    ins = await db[COLLECTION].insert_one(data)
+    return ReportCreateResponse(ok=True, id=str(ins.inserted_id))
 
 
-@router.get("/reports")
+@router.get(
+    "/reports",
+    response_model=ReportListResponse,
+    summary="Listar informes del historial",
+    description="Devuelve informes ordenados por meta.generated_at desc (si falta, se infiere por ObjectId).",
+)
 async def list_reports(
     limit: int = Query(50, ge=1, le=200),
     skip: int = Query(0, ge=0),
-):
-    """
-    Listado para historial.
-    Ordena por meta.generated_at desc (si falta, Mongo lo dejará “más abajo”),
-    pero igualmente normalizamos.
-    """
+) -> ReportListResponse:
     db = get_db()
 
     cursor = (
@@ -207,34 +138,33 @@ async def list_reports(
     async for doc in cursor:
         items.append(_normalize_doc(doc))
 
-    return {"items": items, "limit": limit, "skip": skip}
+    return ReportListResponse(items=items, limit=limit, skip=skip)
 
 
-@router.get("/reports/{report_id}")
-async def get_report(report_id: str):
-    """
-    Detalle de un informe.
-    """
+@router.get(
+    "/reports/{report_id}",
+    response_model=ReportResponse,
+    summary="Obtener detalle de un informe",
+)
+async def get_report(report_id: str) -> ReportResponse:
     if not ObjectId.is_valid(report_id):
         raise HTTPException(status_code=400, detail="ID inválido")
 
     db = get_db()
     doc = await db[COLLECTION].find_one({"_id": ObjectId(report_id)})
-
     if not doc:
         raise HTTPException(status_code=404, detail="Informe no encontrado")
 
-    return _normalize_doc(doc)
+    # Validación final contra response_model
+    return ReportResponse.model_validate(_normalize_doc(doc))
 
 
-# =========================================================
-# NUEVO: DELETE /analytics/reports/{id}
-# =========================================================
-@router.delete("/reports/{report_id}")
-async def delete_report(report_id: str):
-    """
-    Elimina un informe del historial (MongoDB).
-    """
+@router.delete(
+    "/reports/{report_id}",
+    response_model=DeleteResponse,
+    summary="Eliminar un informe del historial",
+)
+async def delete_report(report_id: str) -> DeleteResponse:
     if not ObjectId.is_valid(report_id):
         raise HTTPException(status_code=400, detail="ID inválido")
 
@@ -244,4 +174,4 @@ async def delete_report(report_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Informe no encontrado")
 
-    return {"ok": True, "deleted": True, "id": report_id}
+    return DeleteResponse(ok=True, deleted=True, id=report_id)

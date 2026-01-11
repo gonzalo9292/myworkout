@@ -27,7 +27,7 @@ services:
       MYSQL_PASSWORD: root
       MYSQL_DATABASE: myworkout
       PORT: 3000
-    # En “arquitectura gateway”, no hace falta exponerlo al host
+    # Si quieres acceder al Core API desde el host (opcional), descomenta:
     # ports:
     #   - "3000:3000"
     depends_on:
@@ -51,9 +51,9 @@ services:
       CORE_API_BASE: http://core-api:3000
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: myworkout
-    # En “arquitectura gateway”, no hace falta exponerlo al host
-    # ports:
-    #   - "8000:8000"
+    # CLAVE: esto es lo que te faltaba para abrir /docs, /redoc, /openapi.json
+    ports:
+      - "8000:8000"
     depends_on:
       - core-api
       - mongo
