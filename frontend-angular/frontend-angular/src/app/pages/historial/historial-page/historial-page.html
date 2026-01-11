@@ -1,0 +1,160 @@
+<section class="page">
+  <header class="header">
+    <div>
+      <h1>Historial</h1>
+      <p class="muted">Informes generados y guardados en MongoDB.</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn" (click)="loadHistory()" [disabled]="loading()">
+        {{ loading() ? 'Cargando…' : 'Cargar historial' }}
+      </button>
+
+      <button class="btn ghost" (click)="clearDetail()" [disabled]="!detail()">
+        Cerrar detalle
+      </button>
+    </div>
+  </header>
+
+  <section class="grid">
+    <!-- LISTADO -->
+    <section class="card">
+      <div class="card-title">Listado</div>
+
+      <div class="empty" *ngIf="!loading() && items().length === 0">
+        No hay informes todavía.
+      </div>
+
+      <div class="list" *ngIf="items().length > 0">
+        <article class="row" *ngFor="let it of items()">
+          <div class="row-left">
+            <div class="when">{{ formatIso(it.generated_at) }}</div>
+
+            <div class="pdfline">
+              <span class="pdf-label">PDF</span>
+              <span class="pdf-name" [title]="it.pdf?.filename || ''">
+                {{ it.pdf?.filename || '—' }}
+              </span>
+            </div>
+          </div>
+
+          <div class="row-right">
+            <button class="btn ghost small" (click)="loadDetail(it.id)">
+              Ver detalle
+            </button>
+
+            <button class="btn danger small" (click)="deleteReport(it)">
+              Eliminar
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- DETALLE -->
+    <section class="card detail" *ngIf="detail() as d; else emptyDetail">
+      <div class="card-title">Detalle del informe</div>
+
+      <section class="hero">
+        <div class="hero-left">
+          <div class="hero-label">Rango</div>
+          <div class="hero-range">{{ formatRange(d.range) }}</div>
+
+          <div class="hero-sub">
+            <span class="hero-sub-label">Generado</span>
+            <span class="hero-sub-val">{{ formatIso(d.generated_at) }}</span>
+          </div>
+
+          <div class="hero-sub">
+            <span class="hero-sub-label">PDF</span>
+            <span class="hero-sub-val mono" [title]="d.pdf?.filename || ''">
+              {{ d.pdf?.filename || '—' }}
+            </span>
+          </div>
+        </div>
+
+        <div class="hero-right" *ngIf="d.result?.summary as s">
+          <div class="kpis">
+            <div class="kpi">
+              <div class="kpi-label">Entrenos</div>
+              <div class="kpi-num">{{ s.workouts }}</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Series</div>
+              <div class="kpi-num">{{ s.sets }}</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Reps</div>
+              <div class="kpi-num">{{ s.total_reps }}</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Volumen</div>
+              <div class="kpi-num">{{ s.total_volume }}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail-grid">
+        <!-- Volumen por día -->
+        <section class="subcard">
+          <div class="sub-title">Volumen por día</div>
+
+          <div class="muted tiny" *ngIf="(d.result.by_day?.length || 0) === 0">
+            No hay datos por día en este informe.
+          </div>
+
+          <div class="table" *ngIf="(d.result.by_day?.length || 0) > 0">
+            <div class="t-head">
+              <div>Fecha</div>
+              <div class="right">Volumen</div>
+            </div>
+            <div class="t-row" *ngFor="let row of d.result.by_day">
+              <div>{{ formatDate(row.date) }}</div>
+              <div class="right">{{ row.volume }}</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Top ejercicios -->
+        <section class="subcard">
+          <div class="sub-title">
+            Top ejercicios
+            <span class="muted tiny">(por volumen: reps×kg)</span>
+          </div>
+
+          <div class="muted tiny" *ngIf="topExercisesDetail().length === 0">
+            No hay ranking de ejercicios en este informe.
+          </div>
+
+          <div class="bars" *ngIf="topExercisesDetail().length > 0">
+            <div
+              class="barrow"
+              *ngFor="let ex of topExercisesDetail(); let i = index"
+            >
+              <div class="rank" [title]="'Top #' + (i + 1)">{{ i + 1 }}</div>
+
+              <div class="exname" [title]="ex.exercise">{{ ex.exercise }}</div>
+
+              <div class="bartrack" [title]="'' + ex.volume">
+                <div
+                  class="barfill"
+                  [style.width.%]="pct(ex.volume, maxExerciseVolumeDetail())"
+                ></div>
+              </div>
+
+              <div class="barval">{{ ex.volume }}</div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </section>
+
+    <ng-template #emptyDetail>
+      <section class="card detail">
+        <div class="card-title">Detalle del informe</div>
+        <div class="empty">Selecciona “Ver detalle” en un informe.</div>
+      </section>
+    </ng-template>
+  </section>
+</section>

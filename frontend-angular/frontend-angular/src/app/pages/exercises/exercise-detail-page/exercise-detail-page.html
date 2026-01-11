@@ -1,0 +1,50 @@
+<section class="page">
+  <header class="topbar">
+    <button class="back" (click)="goBack()">← Volver al catálogo</button>
+  </header>
+
+  <section *ngIf="loading()" class="state">Cargando ejercicio…</section>
+
+  <section *ngIf="error()" class="state error">{{ error() }}</section>
+
+  <section *ngIf="!loading() && !error() && exercise() as ex" class="detail">
+    <!-- Columna izquierda: imagen -->
+    <aside class="left">
+      <div class="image-card">
+        <img [src]="imgSrc(ex)" [alt]="ex.name" loading="lazy" />
+      </div>
+    </aside>
+
+    <!-- Columna derecha: contenido -->
+    <main class="right">
+      <h1 class="title">{{ ex.name }}</h1>
+
+      <section class="panel">
+        <h2 class="panel-title">Descripción</h2>
+
+        <p
+          class="description"
+          *ngIf="cleanDescription(ex) as desc; else noDesc"
+        >
+          {{ desc }}
+        </p>
+
+        <ng-template #noDesc>
+          <p class="description muted">Este ejercicio no tiene descripción.</p>
+        </ng-template>
+      </section>
+
+      <section class="panel" *ngIf="ex.muscles?.length">
+        <h2 class="panel-title">Músculos trabajados</h2>
+
+        <div class="chips">
+          <span class="chip" *ngFor="let m of ex.muscles"> {{ m.name }} </span>
+        </div>
+      </section>
+
+      <section class="actions">
+        <button class="btn ghost" (click)="goBack()">Volver</button>
+      </section>
+    </main>
+  </section>
+</section>

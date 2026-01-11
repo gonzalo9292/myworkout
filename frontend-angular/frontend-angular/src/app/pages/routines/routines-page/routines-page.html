@@ -1,0 +1,59 @@
+<section class="page">
+  <header class="page-header">
+    <h1>Rutinas</h1>
+    <p class="muted">Crea rutinas y entra a ver su detalle.</p>
+  </header>
+
+  <section class="toolbar">
+    <input
+      class="inp"
+      placeholder="Nombre de la rutina"
+      [(ngModel)]="newName"
+    />
+
+    <input class="inp" placeholder="Notas (opcional)" [(ngModel)]="newNotes" />
+
+    <button
+      class="btn"
+      (click)="create()"
+      [disabled]="creating() || !newName.trim()"
+    >
+      {{ creating() ? 'Creando…' : 'Crear rutina' }}
+    </button>
+
+    <div class="spacer"></div>
+
+    <span class="pill">Total: {{ routines().length }}</span>
+  </section>
+
+  <section *ngIf="loading()" class="state">Cargando rutinas…</section>
+  <section *ngIf="error()" class="state error">{{ error() }}</section>
+
+  <section *ngIf="!loading() && !error()" class="list">
+    <article class="row" *ngFor="let r of routines()">
+      <div class="info">
+        <div class="name">{{ r.name }}</div>
+        <div class="notes" *ngIf="r.notes">{{ r.notes }}</div>
+      </div>
+
+      <div class="actions">
+        <a class="btn ghost" [routerLink]="['/routines', r.id]">
+          Ver detalle
+        </a>
+
+        <button
+          class="btn danger"
+          (click)="deleteRoutine(r.id)"
+          [disabled]="deletingId() === r.id"
+          title="Eliminar rutina"
+        >
+          {{ deletingId() === r.id ? 'Eliminando…' : 'Eliminar' }}
+        </button>
+      </div>
+    </article>
+
+    <p *ngIf="routines().length === 0" class="muted">
+      Aún no tienes rutinas. Crea la primera arriba.
+    </p>
+  </section>
+</section>

@@ -1,0 +1,96 @@
+<section class="page">
+  <header class="page-header">
+    <h1>Entrenamientos</h1>
+    <p class="muted">
+      Crea tu entrenamiento por fecha y registra series, repeticiones y peso.
+    </p>
+  </header>
+
+  <section class="panel">
+    <h2 class="panel-title">Entrenamiento por fecha</h2>
+
+    <div class="row">
+      <label class="field">
+        <span class="label">Fecha</span>
+        <input class="inp" type="date" [(ngModel)]="selectedDate" />
+      </label>
+
+      <label class="field">
+        <span class="label">Rutina (opcional)</span>
+        <select class="inp" [(ngModel)]="selectedRoutineId">
+          <option [ngValue]="null">Sin rutina (entreno libre)</option>
+          <option *ngFor="let r of routines()" [ngValue]="r.id">
+            {{ r.name }}
+          </option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="label">Notas (opcional)</span>
+        <input
+          class="inp"
+          type="text"
+          [(ngModel)]="notes"
+          placeholder="Ej: Pierna, me sentía bien"
+        />
+      </label>
+
+      <button
+        class="btn"
+        (click)="resolveWorkout()"
+        [disabled]="resolving() || !selectedDate"
+      >
+        {{ resolving() ? 'Comprobando…' : 'Abrir / Crear' }}
+      </button>
+    </div>
+
+    <p class="hint muted">
+      Si ya existe un entrenamiento para esa fecha, se abrirá. Si no existe, se
+      creará. Si eliges una rutina, se copiará automáticamente al entreno.
+    </p>
+
+    <section *ngIf="resolveError()" class="state error">
+      {{ resolveError() }}
+    </section>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title">Recientes</h2>
+      <button class="btn ghost" (click)="loadRecent()" [disabled]="loading()">
+        {{ loading() ? 'Cargando…' : 'Recargar' }}
+      </button>
+    </div>
+
+    <section *ngIf="loading()" class="state">Cargando entrenamientos…</section>
+    <section *ngIf="error()" class="state error">{{ error() }}</section>
+
+    <section *ngIf="!loading() && !error()" class="list">
+      <article class="card" *ngFor="let w of recent()">
+        <div class="info">
+          <div class="date">{{ formatDate(w.workout_date) }}</div>
+          <div class="notes muted" *ngIf="w.notes">{{ w.notes }}</div>
+          <div class="notes muted" *ngIf="!w.notes">Sin notas</div>
+        </div>
+
+        <div class="actions">
+          <a class="btn ghost" [routerLink]="['/workouts', w.id]"
+            >Ver detalle</a
+          >
+
+          <button
+            class="btn danger"
+            (click)="deleteWorkout(w.id)"
+            [disabled]="deletingId() === w.id"
+          >
+            {{ deletingId() === w.id ? 'Eliminando…' : 'Eliminar' }}
+          </button>
+        </div>
+      </article>
+
+      <p class="muted" *ngIf="recent().length === 0">
+        Aún no hay entrenamientos. Crea el primero arriba.
+      </p>
+    </section>
+  </section>
+</section>

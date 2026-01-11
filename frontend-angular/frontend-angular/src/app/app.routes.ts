@@ -1,11 +1,11 @@
 import { Routes } from '@angular/router';
-import { ExercisesPage } from './pages/exercises/exercises-page';
-import { AnalyticsPage } from './pages/analitycs/analytics-page';
-import { HistorialPage } from './pages/historial/historial-page';
-import { ExerciseDetailPage } from './pages/exercises/exercise-detail-page';
-import { RoutinesPage } from './pages/routines/routines-page';
-import { RoutineDetailPage } from './pages/routines/routine-detail-page';
-import { WorkoutsPage } from './pages/workouts/workouts-page';
+import { ExercisesPage } from './pages/exercises/exercises-page/exercises-page';
+import { AnalyticsPage } from './pages/analitycs/analytics-page/analytics-page';
+import { HistorialPage } from './pages/historial/historial-page/historial-page';
+import { ExerciseDetailPage } from './pages/exercises/exercise-detail-page/exercise-detail-page';
+import { RoutinesPage } from './pages/routines/routines-page/routines-page';
+import { RoutineDetailPage } from './pages/routines/routine-detail-page/routine-detail-page';
+import { WorkoutsPage } from './pages/workouts/workouts-page/workouts-page';
 import { WorkoutDetailPage } from './pages/workouts/workout-detail-page';
 
 export const routes: Routes = [

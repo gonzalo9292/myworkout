@@ -1,0 +1,136 @@
+<section class="page">
+  <header class="topbar">
+    <button class="back" (click)="goBack()">← Volver a rutinas</button>
+
+    <div class="spacer"></div>
+
+    <a class="btn ghost" routerLink="/exercises">Abrir catálogo</a>
+  </header>
+
+  <section *ngIf="loading()" class="state">Cargando rutina…</section>
+  <section *ngIf="error()" class="state error">{{ error() }}</section>
+
+  <section *ngIf="!loading() && !error() && routine() as r" class="content">
+    <header class="header">
+      <div>
+        <h1 class="title">{{ r.name }}</h1>
+        <p class="muted" *ngIf="r.notes">{{ r.notes }}</p>
+        <p class="muted" *ngIf="!r.notes">Sin notas.</p>
+      </div>
+
+      <div class="pill">Ejercicios: {{ r.items?.length ?? 0 }}</div>
+    </header>
+
+    <!-- Añadir ejercicio -->
+    <section class="panel">
+      <h2 class="panel-title">Añadir ejercicio</h2>
+
+      <div class="form">
+        <label class="field">
+          <span class="label">Ejercicio</span>
+          <select class="select" [(ngModel)]="selectedExerciseId">
+            <option [ngValue]="null">Selecciona un ejercicio…</option>
+            <option *ngFor="let ex of exercises()" [ngValue]="ex.id">
+              {{ ex.name }}
+            </option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="label">Series</span>
+          <input
+            class="inp"
+            type="number"
+            min="1"
+            step="1"
+            [(ngModel)]="sets"
+            placeholder="Ej: 4"
+          />
+        </label>
+
+        <label class="field">
+          <span class="label">Repeticiones</span>
+          <input
+            class="inp"
+            type="text"
+            [(ngModel)]="reps"
+            placeholder="Ej: 8-12"
+          />
+        </label>
+
+        <label class="field">
+          <span class="label">Notas (opcional)</span>
+          <input
+            class="inp"
+            type="text"
+            [(ngModel)]="itemNotes"
+            placeholder="Ej: sube peso en la última"
+          />
+        </label>
+
+        <button
+          class="btn"
+          (click)="addItem()"
+          [disabled]="adding() || !canAdd()"
+        >
+          {{ adding() ? 'Añadiendo…' : 'Añadir a la rutina' }}
+        </button>
+      </div>
+
+      <p class="hint muted">
+        Consejo: “Repeticiones” es texto libre (8-12, AMRAP, 10/8/6, etc.). El
+        “Peso” es opcional (si lo dejas vacío, no se guarda).
+      </p>
+    </section>
+
+    <!-- Lista de items -->
+    <section class="panel">
+      <h2 class="panel-title">Ejercicios de la rutina</h2>
+
+      <div *ngIf="(r.items?.length ?? 0) === 0" class="empty muted">
+        Esta rutina está vacía. Añade ejercicios arriba.
+      </div>
+
+      <div class="items" *ngIf="(r.items?.length ?? 0) > 0">
+        <article class="item" *ngFor="let it of r.items">
+          <div class="thumb">
+            <img
+              [src]="it.exercise_image_url || placeholder"
+              [alt]="it.exercise_name"
+              loading="lazy"
+            />
+          </div>
+
+          <div class="info">
+            <div class="name">{{ it.exercise_name }}</div>
+
+            <div class="meta">
+              <span class="tag" *ngIf="it.sets">{{ it.sets }} series</span>
+              <span class="tag" *ngIf="it.reps">{{ it.reps }} reps</span>
+              <span class="tag" *ngIf="it.weight_kg != null"
+                >{{ it.weight_kg }} kg</span
+              >
+              <span
+                class="tag"
+                *ngIf="!it.sets && !it.reps && it.weight_kg == null"
+                >Sin plan</span
+              >
+            </div>
+
+            <div class="notes" *ngIf="it.notes">{{ it.notes }}</div>
+          </div>
+
+          <div class="actions">
+            <button
+              class="btn danger"
+              (click)="deleteItem(it.id)"
+              [disabled]="deletingId() === it.id"
+            >
+              {{ deletingId() === it.id ? 'Eliminando…' : 'Eliminar' }}
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+  </section>
+</section>

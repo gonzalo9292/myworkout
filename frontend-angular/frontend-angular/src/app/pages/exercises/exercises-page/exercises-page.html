@@ -1,0 +1,82 @@
+<section class="page">
+  <header class="page-header">
+    <h1>Catálogo de ejercicios</h1>
+    <p class="muted">Busca, filtra y abre el detalle del ejercicio.</p>
+  </header>
+
+  <section class="toolbar">
+    <input
+      class="search"
+      type="text"
+      placeholder="Buscar por nombre..."
+      [ngModel]="q()"
+      (ngModelChange)="onQueryChange($event)"
+    />
+
+    <div class="spacer"></div>
+
+    <div class="meta">
+      <span class="pill">
+        Mostrando {{ filtered().length }} / {{ all().length }}
+      </span>
+    </div>
+  </section>
+
+  <section *ngIf="loading()" class="state">Cargando ejercicios…</section>
+  <section *ngIf="error()" class="state error">
+    Error cargando ejercicios: {{ error() }}
+  </section>
+
+  <section *ngIf="!loading() && !error()" class="grid">
+    <article class="card" *ngFor="let ex of paged(); trackBy: trackById">
+      <div class="thumb">
+        <img [src]="imgSrc(ex)" [alt]="ex.name" loading="lazy" />
+      </div>
+
+      <div class="card-body">
+        <div class="title" [title]="ex.name">{{ ex.name }}</div>
+
+        <div class="desc" *ngIf="ex.description_text">
+          {{ ex.description_text }}
+        </div>
+
+        <div class="actions">
+          <button class="btn" type="button" (click)="openDetail(ex.id)">
+            Ver detalle
+          </button>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section *ngIf="!loading() && !error()" class="pager">
+    <button
+      class="btn ghost"
+      type="button"
+      (click)="prevPage()"
+      [disabled]="page() === 1"
+    >
+      Anterior
+    </button>
+
+    <span class="muted"> Página {{ page() }} / {{ totalPages() }} </span>
+
+    <button
+      class="btn ghost"
+      type="button"
+      (click)="nextPage()"
+      [disabled]="page() === totalPages()"
+    >
+      Siguiente
+    </button>
+
+    <div class="perpage">
+      <span class="muted">Por página:</span>
+      <select [ngModel]="pageSize()" (ngModelChange)="onPageSizeChange($event)">
+        <option [ngValue]="12">12</option>
+        <option [ngValue]="24">24</option>
+        <option [ngValue]="48">48</option>
+      </select>
+    </div>
+  </section>
+</section>

@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   mysql:
     image: mysql:8.0
@@ -27,9 +29,8 @@ services:
       MYSQL_PASSWORD: root
       MYSQL_DATABASE: myworkout
       PORT: 3000
-    # Si quieres acceder al Core API desde el host (opcional), descomenta:
-    # ports:
-    #   - "3000:3000"
+    ports:
+      - "3000:3000" # ⬅️ DESCOMENTADO (acceso directo desde host)
     depends_on:
       mysql:
         condition: service_healthy
@@ -51,7 +52,6 @@ services:
       CORE_API_BASE: http://core-api:3000
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: myworkout
-    # CLAVE: esto es lo que te faltaba para abrir /docs, /redoc, /openapi.json
     ports:
       - "8000:8000"
     depends_on:

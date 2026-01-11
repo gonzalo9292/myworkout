@@ -1,0 +1,244 @@
+<section class="page">
+  <header class="header">
+    <div>
+      <h1>Analíticas</h1>
+      <p class="muted">
+        Volumen (reps × kg), evolución por día y top ejercicios.
+      </p>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" (click)="quick7()">7 días</button>
+      <button class="btn ghost" (click)="quick30()">30 días</button>
+      <button class="btn ghost" (click)="quick90()">90 días</button>
+
+      <button
+        class="btn"
+        (click)="generatePdfFromView()"
+        [disabled]="!result() || generatingPdf()"
+        title="Descarga un PDF con la analítica visible en este momento"
+      >
+        {{ generatingPdf() ? 'Generando…' : 'Generar informe' }}
+      </button>
+    </div>
+  </header>
+
+  <!-- Controles -->
+  <section class="card controls">
+    <div class="controls-left">
+      <label class="field">
+        <span class="label">Desde</span>
+        <input
+          class="inp"
+          type="date"
+          [value]="fromDate()"
+          (input)="fromDate.set(($any($event.target).value || '').trim())"
+        />
+      </label>
+
+      <label class="field">
+        <span class="label">Hasta</span>
+        <input
+          class="inp"
+          type="date"
+          [value]="toDate()"
+          (input)="toDate.set(($any($event.target).value || '').trim())"
+        />
+      </label>
+
+      <button class="btn" (click)="loadSummary()" [disabled]="loading()">
+        {{ loading() ? 'Cargando…' : 'Cargar' }}
+      </button>
+    </div>
+
+    <div class="controls-right">
+      <div class="mini">
+        <div class="mini-title">Últimos N días</div>
+        <div class="mini-row">
+          <input
+            class="inp small"
+            type="number"
+            min="1"
+            max="3650"
+            [value]="days()"
+            (input)="days.set(toInt($any($event.target).value || '90'))"
+          />
+          <button
+            class="btn ghost"
+            (click)="rebuildLatest()"
+            [disabled]="rebuilding()"
+          >
+            {{ rebuilding() ? 'Rebuild…' : 'Rebuild' }}
+          </button>
+        </div>
+        <div class="muted tiny">
+          Rebuild recalcula el rango automáticamente.
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="error()" class="alert error">{{ error() }}</div>
+    <div *ngIf="rebuildError()" class="alert error">{{ rebuildError() }}</div>
+    <div *ngIf="pdfError()" class="alert error">{{ pdfError() }}</div>
+  </section>
+
+  <!-- Estado vacío -->
+  <section *ngIf="!result() && !loading()" class="card empty">
+    <div class="empty-title">Sin datos cargados</div>
+    <div class="muted">
+      Pulsa <strong>Cargar</strong> o usa <strong>Rebuild</strong> para ver las
+      gráficas.
+    </div>
+  </section>
+
+  <!-- Resultados (esto es lo que exportamos a PDF) -->
+  <section *ngIf="result() as r" class="layout" id="report-root">
+    <!-- KPIs -->
+    <section class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">Rango</div>
+        <div class="kpi-val">
+          {{ formatDate(r.from) }} → {{ formatDate(r.to) }}
+        </div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Entrenamientos</div>
+        <div class="kpi-num">{{ r.summary.workouts }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Series</div>
+        <div class="kpi-num">{{ r.summary.sets }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Reps</div>
+        <div class="kpi-num">{{ r.summary.total_reps }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Volumen total</div>
+        <div class="kpi-num">{{ formatNum(r.summary.total_volume) }}</div>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section class="charts">
+      <!-- Line chart: volumen por día -->
+      <section class="card chart">
+        <div class="card-title-row">
+          <div>
+            <div class="title">Volumen por día</div>
+            <div class="muted tiny" *ngIf="r.by_day.length">
+              {{ r.by_day.length }} día{{ r.by_day.length === 1 ? '' : 's' }}
+            </div>
+          </div>
+          <div class="muted tiny" *ngIf="r.by_day.length">
+            Máx: {{ formatNum(maxDayVolume()) }}
+          </div>
+        </div>
+
+        <div *ngIf="r.by_day.length === 0" class="muted">
+          No hay datos en este rango.
+        </div>
+
+        <div *ngIf="r.by_day.length > 0" class="svg-wrap">
+          <svg [attr.viewBox]="'0 0 ' + chartW + ' ' + chartH" class="svg">
+            <!-- grid -->
+            <g class="grid">
+              <line
+                *ngFor="let y of gridYs"
+                [attr.x1]="pad"
+                [attr.y1]="y"
+                [attr.x2]="chartW - pad"
+                [attr.y2]="y"
+              />
+            </g>
+
+            <!-- area -->
+            <path class="area" [attr.d]="areaPath()" />
+
+            <!-- line -->
+            <path class="line" [attr.d]="linePath()" />
+
+            <!-- points -->
+            <g>
+              <circle
+                *ngFor="let p of dayPoints()"
+                class="pt"
+                [attr.cx]="p.x"
+                [attr.cy]="p.y"
+                r="4"
+              >
+                <title>{{ p.label }}</title>
+              </circle>
+            </g>
+
+            <!-- x labels (primero y último) -->
+            <g class="labels">
+              <text [attr.x]="pad" [attr.y]="chartH - 8" text-anchor="start">
+                {{ formatShort(r.by_day[0].date) }}
+              </text>
+              <text
+                [attr.x]="chartW - pad"
+                [attr.y]="chartH - 8"
+                text-anchor="end"
+              >
+                {{ formatShort(r.by_day[r.by_day.length - 1].date) }}
+              </text>
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <!-- Bar chart: top ejercicios -->
+      <section class="card chart">
+        <div class="card-title-row">
+          <div>
+            <div class="title">Top ejercicios (volumen)</div>
+            <div class="muted tiny" *ngIf="topExercises().length">
+              Top {{ topExercises().length }}
+            </div>
+          </div>
+          <div class="muted tiny" *ngIf="topExercises().length">
+            Máx: {{ formatNum(maxExerciseVolume()) }}
+          </div>
+        </div>
+
+        <div *ngIf="topExercises().length === 0" class="muted">
+          No hay ranking en este rango.
+        </div>
+
+        <div *ngIf="topExercises().length > 0" class="bars">
+          <div class="barrow" *ngFor="let ex of topExercises(); let i = index">
+            <div class="barname">
+              <span class="badge">{{ i + 1 }}</span>
+              <span class="name" [title]="ex.exercise">{{ ex.exercise }}</span>
+            </div>
+
+            <div class="bartrack" [title]="formatNum(ex.volume)">
+              <div
+                class="barfill"
+                [style.width.%]="pct(ex.volume, maxExerciseVolume())"
+              ></div>
+            </div>
+
+            <div class="barval">{{ formatNum(ex.volume) }}</div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- Tabla simple -->
+    <section class="card table" *ngIf="r.by_day.length > 0">
+      <div class="title">Detalle por día</div>
+
+      <div class="t-head">
+        <div>Fecha</div>
+        <div class="right">Volumen</div>
+      </div>
+
+      <div class="t-row" *ngFor="let d of r.by_day">
+        <div>{{ formatDate(d.date) }}</div>
+        <div class="right">{{ formatNum(d.volume) }}</div>
+      </div>
+    </section>
+  </section>
+</section>
